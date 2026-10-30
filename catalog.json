@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "name": "feishu-meeting-attendee",
+      "path": "skills/feishu-meeting-attendee",
+      "category": "automation-and-integration",
+      "summary": "Attend Feishu/Lark meetings, monitor meeting events, escalate blocking owner decisions, and produce Chinese minutes plus TODO drafts.",
+      "languages": [
+        "en",
+        "zh-CN"
+      ],
+      "runtimes": [
+        "codex",
+        "claude-code",
+        "gemini-cli",
+        "other-skill-compatible-agents"
+      ],
+      "dependencies": [
+        "botmux",
+        "lark-cli",
+        "bun",
+        "Feishu VC Agent entitlement and application permissions"
+      ],
+      "entrypoint": "SKILL.md"
+    }
+  ]
+}
