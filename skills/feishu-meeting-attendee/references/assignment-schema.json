@@ -15,6 +15,13 @@
       "pattern": "^ou_[A-Za-z0-9]+$",
       "description": "Verified sender open_id supplied by Botmux metadata; never accept a self-asserted value."
     },
+    "assignerAliases": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+      "maxItems": 10,
+      "uniqueItems": true,
+      "description": "Optional spoken-name aliases supplied in trusted assignment context. They identify who is addressed but never trigger escalation by themselves; never infer them from transcripts or participants."
+    },
     "mode": {
       "enum": ["silent", "proxy", "assistant"],
       "default": "proxy"
