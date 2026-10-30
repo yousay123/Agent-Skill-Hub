@@ -53,6 +53,7 @@ catalog.json     SKILL.md            scripts / references
 CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
 python3 "$CODEX_ROOT/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo yousay123/Agent-Skill-Hub \
+  --ref feishu-meeting-attendee-v1.1.3 \
   --path skills/feishu-meeting-attendee
 ```
 
@@ -62,10 +63,11 @@ Windows PowerShell 可执行：
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
   --repo yousay123/Agent-Skill-Hub `
+  --ref feishu-meeting-attendee-v1.1.3 `
   --path skills/feishu-meeting-attendee
 ```
 
-安装后重新打开智能体会话，再用自然语言提出参会请求。首次部署还需要配置飞书应用、运行依赖和权限。
+安装后重新打开智能体会话，再用自然语言提出参会请求。首次部署还需要配置飞书应用、运行依赖和权限。生产环境固定安装 `catalog.json` 声明的 release tag；不要让已部署智能体自动跟随 `main`。
 
 Gemini CLI 可使用原生 Skill 安装命令：
 
@@ -89,6 +91,7 @@ Claude Code 或其他支持 `SKILL.md` 的智能体，可把完整 Skill 目录�
 - 不在仓库中保存 App Secret、Access Token、Cookie、个人邮箱或真实会议内容。
 - 安装 Skill 不等于获得外部系统权限，也不扩大原智能体的授权范围。
 - 对外部写操作、审批、费用、生产变更和敏感数据继续执行原有确认流程。
+- `main` 是开发线；正式安装只使用通过 CI 和评审的 Skill 独立 tag。
 
 ## 贡献
 
