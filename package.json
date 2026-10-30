@@ -1,0 +1,10 @@
+{
+  "name": "agent-skill-hub",
+  "private": true,
+  "packageManager": "bun@1.4.3",
+  "scripts": {
+    "check:sensitive": "bun scripts/check-sensitive-content.ts",
+    "validate:skills": "bun scripts/validate-skills.ts",
+    "test": "bun test"
+  }
+}

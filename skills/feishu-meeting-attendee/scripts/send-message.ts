@@ -10,7 +10,7 @@ function optionValue(args: string[], name: string): string | undefined {
 
 function stableUuid(meetingId: string, key: string): string {
   const chars = createHash('sha256')
-    .update(`agent-skill-hub:feishu-meeting-attendee:message:v1:${meetingId}:${key}`)
+    .update(`botmux-feishu-meeting-attendee:message:v1:${meetingId}:${key}`)
     .digest('hex').slice(0, 32).split('');
   chars[12] = '5';
   chars[16] = '8';
@@ -19,10 +19,6 @@ function stableUuid(meetingId: string, key: string): string {
 }
 
 const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write('Usage: send-message.ts <meeting-id> --key <stable-semantic-key> --text <message> [--dry-run]\n');
-  process.exit(0);
-}
 const meetingId = args.find(arg => !arg.startsWith('--'));
 const text = optionValue(args, '--text')?.trim();
 const key = optionValue(args, '--key')?.trim();

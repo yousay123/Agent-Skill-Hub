@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-const DEFAULT_GREETING = '大家好，我是本次会议受托参会的智能体助手，主人现在在忙，我代为参会，会后会同步会议内容和TODO';
+const DEFAULT_GREETING = '大家好，我是受委托参会的智能体助手，仅做记录与总结，不代表委托人作出承诺；会后我会把会议内容和 TODO 同步给委托人。';
 type MeetingMode = 'silent' | 'proxy' | 'assistant';
 
 function usage(): never {
@@ -35,7 +35,7 @@ function meetingNumberFrom(value: string): string | undefined {
 
 function stableGreetingUuid(meetingId: string, greeting: string): string {
   const chars = createHash('sha256')
-    .update(`agent-skill-hub:feishu-meeting-attendee:greeting:v2:${meetingId}:${greeting}`)
+    .update(`botmux-feishu-meeting-attendee:greeting:v2:${meetingId}:${greeting}`)
     .digest('hex')
     .slice(0, 32)
     .split('');
@@ -78,17 +78,24 @@ function assertLarkOk(raw: unknown, operation: string): Record<string, unknown> 
   const body = raw as Record<string, unknown>;
   if (body.ok === false || (body.code !== undefined && body.code !== 0 && body.code !== '0')) {
     const error = objectAt(body, 'error');
+    const nested = error ? objectAt(error, 'error') ?? objectAt(error, 'detail') : undefined;
+    const code = error?.code ?? body.code;
+    const nestedCode = nested?.code;
+    const subtype = error?.subtype ?? error?.type;
     const message = error?.message ?? body.message ?? body.msg ?? `${operation} failed`;
-    throw new Error(String(message));
+    const details = [
+      `${operation} failed`,
+      code !== undefined ? `code=${String(code)}` : undefined,
+      nestedCode !== undefined ? `nestedCode=${String(nestedCode)}` : undefined,
+      subtype !== undefined ? `subtype=${String(subtype)}` : undefined,
+      String(message),
+    ].filter(Boolean);
+    throw new Error(details.join(' '));
   }
   return body;
 }
 
 const argv = process.argv.slice(2);
-if (argv.includes('--help') || argv.includes('-h')) {
-  process.stdout.write('Usage: join-and-greet.ts <9-digit-meeting-number-or-link> [--mode silent|proxy|assistant] [--intro <text>] [--dry-run]\n');
-  process.exit(0);
-}
 const dryRun = argv.includes('--dry-run');
 const mode = parseMode(optionValue(argv, '--mode'));
 const customIntro = optionValue(argv, '--intro')?.trim();

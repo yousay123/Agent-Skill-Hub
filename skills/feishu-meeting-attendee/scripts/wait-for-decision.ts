@@ -37,10 +37,6 @@ function extractMessages(response: unknown): Record<string, unknown>[] {
 }
 
 const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write('Usage: wait-for-decision.ts --chat-id <oc_xxx> --owner-id <ou_xxx> --after <ISO-8601> [--timeout-seconds <0-1800>] [--poll-seconds <2-60>] [--dry-run]\n');
-  process.exit(0);
-}
 const dryRun = args.includes('--dry-run');
 const chatId = required(args, '--chat-id');
 const ownerId = required(args, '--owner-id');

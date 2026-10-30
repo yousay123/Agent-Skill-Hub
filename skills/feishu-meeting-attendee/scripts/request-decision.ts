@@ -23,10 +23,6 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 }
 
 const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write('Usage: request-decision.ts <meeting-id> --meeting-no <number> --user-id <ou_xxx> --key <key> --question <text> [--context <text>] [--options <text>] [--deadline <text>] [--dry-run]\n');
-  process.exit(0);
-}
 const dryRun = args.includes('--dry-run');
 const meetingId = args.find(arg => !arg.startsWith('--'));
 if (!meetingId) throw new Error('Usage: request-decision.ts <meeting-id> --meeting-no <number> --user-id <ou_xxx> --key <key> --question <text> [--context <text>] [--options <text>] [--deadline <text>] [--dry-run]');

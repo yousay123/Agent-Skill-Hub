@@ -89,6 +89,7 @@ macOS / Linux：
 CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
 python3 "$CODEX_ROOT/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo yousay123/Agent-Skill-Hub \
+  --ref feishu-meeting-attendee-v1.1.3 \
   --path skills/feishu-meeting-attendee
 ```
 
@@ -98,6 +99,7 @@ Windows PowerShell：
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
   --repo yousay123/Agent-Skill-Hub `
+  --ref feishu-meeting-attendee-v1.1.3 `
   --path skills/feishu-meeting-attendee
 ```
 
@@ -106,7 +108,7 @@ py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.
 macOS / Linux：
 
 ```bash
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee \
   "${CODEX_HOME:-$HOME/.codex}/skills/"
@@ -115,7 +117,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee \
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 $SkillsRoot = Join-Path $CodexRoot "skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
@@ -127,7 +129,7 @@ Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $Skill
 将完整 Skill 目录放入用户级 `~/.claude/skills/`：
 
 ```bash
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "$HOME/.claude/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 ```
@@ -135,7 +137,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 $SkillsRoot = Join-Path $HOME ".claude\skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
 Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
@@ -153,7 +155,7 @@ gemini skills install https://github.com/yousay123/Agent-Skill-Hub.git \
 也可以复制到 `~/.gemini/skills/`：
 
 ```bash
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "$HOME/.gemini/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.gemini/skills/"
 ```
@@ -161,7 +163,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.gemini/skills/"
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.1.3 https://github.com/yousay123/Agent-Skill-Hub.git
 $SkillsRoot = Join-Path $HOME ".gemini\skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
 Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
@@ -212,7 +214,7 @@ lark-cli doctor
 
 - `vc.bot.meeting_invited_v1`：被邀请后入会。
 - `vc.bot.meeting_activity_v1`：会中活动监听。
-- `vc.bot.meeting_ended_v1`：会议结束后做最终增量读取。
+- `vc.bot.meeting_ended_v1`：会议结束的终态提示；从已落盘的本地归档收口，不依赖会后事件补读。
 - `im.message.receive_v1`：接收 IM 指令和私聊决策回复。
 
 按会议号和时间主动入会不依赖邀请事件。如果控制台里看不到 VC Scope/事件，或 API 返回 `ErrNotInGray` / `20017`，需要向飞书申请 VC Agent 能力，不能绕过租户授权。
@@ -230,10 +232,10 @@ lark-cli doctor
   → 宿主校验输入、权限和已验证的智能体主人身份
   → 到会议时间触发 Skill（或立即执行）
   → join-and-greet.ts 入会并按模式发送一次介绍
-  → poll-meeting-events.ts 持续读取会议事件
+  → poll-and-archive.ts 持续读取并可靠落盘会议事件
   → 宿主整理发言、决策、TODO、风险和采集限制
   → 必要且已启用时，私聊智能体主人做阻塞决策升级
-  → 会议结束后做一次最终读取
+  → 会议结束后从本地归档收口并报告尾部覆盖缺口
   → 通过宿主的标准交付接口发送一次纪要与任务草稿
 ```
 
@@ -241,7 +243,7 @@ Skill 自带的通用 helper：
 
 ```bash
 bun scripts/join-and-greet.ts --help
-bun scripts/poll-meeting-events.ts --help
+bun scripts/poll-and-archive.ts --help
 bun scripts/send-message.ts --help
 ```
 
@@ -259,11 +261,12 @@ bun scripts/send-message.ts --help
 3. 单次读取会议事件：
 
    ```bash
-   bun scripts/poll-meeting-events.ts '<meetingId>' --once
+   bun scripts/poll-and-archive.ts '<meetingId>' \
+     --assigner-ref '<verified-assigner-open-id>' --max-polls 1
    ```
 
 4. 测试 `proxy` 模式，确认介绍只发送一次。
-5. 验证轮询会跨越短暂无发言继续运行，并在会议结束后做最终读取。
+5. 验证轮询会跨越短暂无发言继续运行，会议结束后从本地归档收口，并明确报告尾部覆盖缺口。
 6. 如启用私聊决策升级，仅向已验证的智能体主人发送非约束性测试问题，并确认其他发送者的回复会被忽略。
 7. 确认最终结果只回传一次，缺失的负责人或截止时间标为“待明确”。
 
@@ -271,7 +274,7 @@ bun scripts/send-message.ts --help
 
 ## 8. 升级与停用
 
-升级前先查看仓库变更。Git 安装可重新拉取仓库，再把完整 Skill 目录覆盖到目标位置；重启智能体会话后重新运行冒烟测试。
+升级前先查看仓库变更和目标 Skill 的 release tag。只安装已通过 CI 与评审的固定 tag，再把完整 Skill 目录覆盖到目标位置；不要让生产环境自动跟随 `main`。重启智能体会话后重新运行冒烟测试。
 
 需要暂时停用时，移动到备份目录，避免不可恢复删除：
 
@@ -314,7 +317,7 @@ Move-Item "$HOME\.claude\skills\feishu-meeting-attendee" `
 ### 定时任务触发但没有完整纪要
 
 - 确认宿主能保持轮询会话，不会在短暂无发言时回收进程。
-- 检查会议结束事件以及最终单次读取是否执行。
+- 检查持续归档是否运行到终态，以及 `final.json` 是否如实记录尾部覆盖缺口。
 - 报告实际覆盖时间和断连，不要把部分记录描述成完整会议。
 
 ## 10. 上线检查清单

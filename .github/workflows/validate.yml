@@ -1,0 +1,30 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Scan sensitive content
+        run: bun run check:sensitive
+      - name: Validate skill catalog and links
+        run: bun run validate:skills
+      - name: Run behavior tests
+        run: bun test
+      - name: Compile skill helpers
+        run: |
+          build_dir="$(mktemp -d)"
+          for script in skills/*/scripts/*.ts; do
+            bun build "$script" --target=bun --outdir="$build_dir"
+          done
