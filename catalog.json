@@ -17,9 +17,9 @@
         "other-skill-compatible-agents"
       ],
       "dependencies": [
-        "botmux",
         "lark-cli",
         "bun",
+        "host agent/runtime with persistent polling and optional scheduling",
         "Feishu VC Agent entitlement and application permissions"
       ],
       "entrypoint": "SKILL.md"

@@ -1,63 +1,46 @@
 # Agent Skill Hub 安装与部署手册
 
-本文面向需要把本仓库 Skill 安装到本机智能体，或部署完整飞书会议参会能力的使用者。示例 Skill 为 `feishu-meeting-attendee`。
+本文说明如何在 macOS、Windows 和 Linux 上安装本仓库的 Skill，并以 `feishu-meeting-attendee` 为例部署完整外部能力。仓库不绑定某一种智能体编排框架；只要宿主能发现 `SKILL.md`、运行辅助脚本并把结果交付给用户，即可接入。
 
-## 1. 先选择部署层级
+## 1. 部署层级
 
 | 层级 | 适用场景 | 需要完成 |
 | --- | --- | --- |
-| 仅安装 Skill | 让智能体认识能力、流程和安全边界 | 把 Skill 目录安装到目标智能体并重启会话 |
-| 完整能力部署 | 需要真实加入飞书会议、监听并返回纪要 | 安装 Skill，并配置 Bun、Botmux、lark-cli、飞书应用权限和身份 |
+| 仅安装 Skill | 让智能体认识能力、流程和安全边界 | 把完整 Skill 目录安装到目标智能体并重启会话 |
+| 完整能力部署 | 真实加入飞书会议、持续监听并回传纪要 | 安装 Skill，配置 Bun、lark-cli、宿主运行能力、飞书应用权限和身份 |
 
-Skill 本身不包含账号、Token、App Secret 或租户授权。复制目录不会自动获得飞书权限。
+Skill 不包含账号、Token、App Secret 或租户授权。复制目录不会自动获得外部系统权限。
 
 ## 2. 环境准备
 
-### 2.1 通用依赖
+通用依赖：
 
-- Git：推荐用于下载和升级仓库。
+- Git：下载和升级仓库。
 - Python 3：使用 Codex 内置 Skill Installer 时需要。
-- Bun：运行 `feishu-meeting-attendee/scripts/*.ts` 时需要。
-- 目标智能体：Codex、Claude Code、Gemini CLI，或其他能读取 `SKILL.md` 的运行时。
+- Bun：运行 Skill 自带的 TypeScript helper。
+- lark-cli：调用飞书开放能力。
+- 支持 Skill 的智能体宿主：Codex、Claude Code、Gemini CLI，或其他能读取 `SKILL.md` 的运行时。
 
-如果只复制 Skill 且目标运行时不会执行 TypeScript helper，可以暂不安装 Bun；真实参会时必须补齐完整运行依赖。
-
-### 2.2 macOS
-
-使用 Homebrew 安装 Git 和 Python：
+### 2.1 macOS
 
 ```bash
 brew install git python
-```
-
-安装 Bun：
-
-```bash
 curl -fsSL https://bun.com/install | bash
 exec "$SHELL"
-```
-
-Bun 当前要求 macOS 13.0 或更高版本。
-
-检查：
-
-```bash
 git --version
 python3 --version
 bun --version
 ```
 
-### 2.3 Windows
+### 2.2 Windows
 
-在 PowerShell 中使用 winget：
+在 PowerShell 中执行：
 
 ```powershell
 winget install --id Git.Git -e
 winget install --id Python.Python.3.12 -e
 powershell -c "irm bun.sh/install.ps1 | iex"
 ```
-
-Bun 当前要求 Windows 10 1809 或更高版本。
 
 关闭并重新打开 PowerShell，然后检查：
 
@@ -67,7 +50,7 @@ py --version
 bun --version
 ```
 
-### 2.4 Linux
+### 2.3 Linux
 
 Ubuntu / Debian：
 
@@ -94,80 +77,11 @@ python3 --version
 bun --version
 ```
 
-生产服务器建议用专用的非 root 运行账号安装 Skill 和启动智能体进程；不要把凭据写入仓库或 Shell 历史。
+生产环境建议使用专用非 root 账号运行智能体，不要把凭据写入仓库、配置样例或 Shell 历史。
 
-## 3. 安装 Botmux 运行时
+## 3. 安装 Skill
 
-如果只想让现有智能体读取 Skill，可跳到第 4 节。需要定时入会、持续监听和飞书消息回投时，先部署 Botmux。
-
-### 3.1 macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/deepcoldy/botmux/master/install.sh | sh
-botmux setup
-botmux start
-```
-
-`botmux setup` 会引导创建或绑定飞书应用、选择 AI CLI 和工作目录。需要开机自启时执行：
-
-```bash
-botmux autostart enable
-```
-
-### 3.2 Windows
-
-Botmux 当前要求 Windows 用户在 WSL2 中运行。先在管理员 PowerShell 安装 WSL2：
-
-```powershell
-wsl --install
-```
-
-按系统提示重启并完成 Linux 用户初始化，然后在 WSL2 终端执行与 Linux 相同的命令：
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git python3 curl unzip
-curl -fsSL https://bun.com/install | bash
-exec "$SHELL"
-curl -fsSL https://raw.githubusercontent.com/deepcoldy/botmux/master/install.sh | sh
-botmux setup
-botmux start
-```
-
-第 2.3 节的原生 Windows Bun 适合在 PowerShell 中运行 helper；完整 Botmux 部署应在 WSL2 内另行安装 Linux 版 Git、Python 和 Bun。不要在原生 Windows PowerShell 中直接启动 Botmux daemon。
-
-### 3.3 运行时检查
-
-```bash
-botmux --version
-botmux skills doctor
-```
-
-安装和升级的官方入口见 [Botmux 快速接入](https://deepcoldy.github.io/botmux/quickstart)。
-
-## 4. 安装 Skill
-
-### 4.1 方式 A：Botmux Skill Registry（完整能力推荐）
-
-macOS、Linux 和 Windows WSL2 使用同一组命令：
-
-```bash
-botmux skills install github:yousay123/Agent-Skill-Hub/skills/feishu-meeting-attendee
-botmux skills inspect feishu-meeting-attendee
-botmux skills doctor
-```
-
-在 Dashboard 的 Skills 页面把 Skill 分配给目标机器人；也可以在与目标机器人的会话中执行：
-
-```text
-/skills attach feishu-meeting-attendee
-```
-
-Botmux 把 Skill 安装到自己的 registry，不会改写 Codex、Claude Code 或 Gemini CLI 的全局 Skill 目录。需要底层 CLI 独立发现该 Skill 时，再选择后续对应安装方式。
-
-### 4.2 方式 B：Codex Skill Installer
-
-该方式只下载指定 Skill，不需要克隆整个仓库。
+### 3.1 Codex Skill Installer
 
 macOS / Linux：
 
@@ -187,9 +101,7 @@ py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.
   --path skills/feishu-meeting-attendee
 ```
 
-如果目标 Codex 没有 `skill-installer`，使用下面的 Git 方式。
-
-### 4.3 方式 C：Git 安装到 Codex
+### 3.2 Git 复制到 Codex
 
 macOS / Linux：
 
@@ -210,17 +122,12 @@ New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
 Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
 ```
 
-### 4.4 安装到 Claude Code
+### 3.3 Claude Code
 
-先克隆仓库：
+将完整 Skill 目录放入用户级 `~/.claude/skills/`：
 
 ```bash
 git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
-```
-
-macOS / Linux：
-
-```bash
 mkdir -p "$HOME/.claude/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 ```
@@ -228,256 +135,205 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 Windows PowerShell：
 
 ```powershell
-$ClaudeSkills = Join-Path $HOME ".claude\skills"
-New-Item -ItemType Directory -Force -Path $ClaudeSkills | Out-Null
-Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $ClaudeSkills -Recurse -Force
+git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+$SkillsRoot = Join-Path $HOME ".claude\skills"
+New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
+Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
 ```
 
-Claude Code 的个人 Skill 路径为 `~/.claude/skills/<skill-name>/SKILL.md`；项目共享 Skill 可放在仓库的 `.claude/skills/`。个人 Skill 只适用于本机终端会话，不会自动出现在 Cowork 或云会话中。
+### 3.4 Gemini CLI
 
-### 4.5 安装到 Gemini CLI
-
-Gemini CLI 可以直接从 Git 仓库安装指定子目录：
+优先使用原生安装命令：
 
 ```bash
 gemini skills install https://github.com/yousay123/Agent-Skill-Hub.git \
-  --path skills/feishu-meeting-attendee \
-  --scope user
+  --path skills/feishu-meeting-attendee --scope user
 ```
 
-确认安全提示后，在交互式会话中刷新并检查：
-
-```text
-/skills reload
-/skills list
-```
-
-也可手动复制到用户目录 `~/.gemini/skills/`，或复制到项目目录 `.gemini/skills/`。项目目录需要位于受信任的工作区。
-
-不同版本的智能体可能支持项目级或用户级 Skill 目录。若本机配置使用了自定义目录，以该运行时实际配置为准。
-
-## 5. 安装后验证
-
-先确认文件存在。
-
-macOS / Linux（Codex）：
+也可以复制到 `~/.gemini/skills/`：
 
 ```bash
-test -f "${CODEX_HOME:-$HOME/.codex}/skills/feishu-meeting-attendee/SKILL.md" \
-  && echo "Skill installed"
-```
-
-Windows PowerShell（Codex）：
-
-```powershell
-$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-Test-Path "$CodexRoot\skills\feishu-meeting-attendee\SKILL.md"
-```
-
-验证 helper 能加载：
-
-macOS / Linux：
-
-```bash
-bun "${CODEX_HOME:-$HOME/.codex}/skills/feishu-meeting-attendee/scripts/join-and-greet.ts" --help
+git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+mkdir -p "$HOME/.gemini/skills"
+cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.gemini/skills/"
 ```
 
 Windows PowerShell：
 
 ```powershell
-$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-bun "$CodexRoot\skills\feishu-meeting-attendee\scripts\join-and-greet.ts" --help
+git clone --depth 1 https://github.com/yousay123/Agent-Skill-Hub.git
+$SkillsRoot = Join-Path $HOME ".gemini\skills"
+New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
+Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
 ```
 
-最后完全退出并重新打开智能体会话，再提出“帮我参加这个飞书会议”一类请求，确认 Skill 能被发现。此时不要直接用生产会议做第一次测试。
+### 3.5 其他兼容宿主
 
-## 6. 部署飞书会议参会能力
+复制整个 `skills/feishu-meeting-attendee` 目录，不能只复制 `SKILL.md`。宿主至少应：
 
-### 6.1 运行组件
+1. 发现并完整读取 `SKILL.md`，按需读取其 `references/`。
+2. 能用 Bun 执行 `scripts/` 下的 helper。
+3. 能保持一个轮询进程或会话运行到会议结束。
+4. 需要定时参会时，能在指定时间触发一次 Skill 执行。
+5. 能把最终纪要恰好一次交付给发起会话。
+6. 能安全保存飞书应用凭据和经过验证的用户身份映射。
 
-完整参会链路需要：
+如果宿主缺少定时能力，仍可在会议开始时手动触发；如果缺少持久会话能力，只能做单次事件读取，不能宣称已完整覆盖会议。
 
-```text
-用户请求
-  → 智能体加载 Skill
-  → Botmux 调度会话或定时任务
-  → lark-cli 使用当前飞书应用身份调用 VC Agent
-  → Bun helper 入会并发送受控消息
-  → botmux vc-agent poll 持续读取会议事件
-  → 智能体生成纪要和 TODO 草稿
-```
+## 4. 配置 lark-cli 与飞书应用
 
-Botmux 会话使用当前飞书应用对应的托管 `lark-cli` 绑定。完成 setup 和机器人配置后，从 Botmux 管理的会话内检查：
+按 [lark-cli Agent Skills 指引](https://github.com/larksuite/cli#agent-skills) 安装并为目标飞书应用建立独立配置。不同应用的凭据和身份映射必须隔离。
+
+完成后检查：
 
 ```bash
-botmux --version
-lark-cli --help
-bun --version
+lark-cli --version
+lark-cli doctor
 ```
 
-如果命令不可用，不要跳过并直接测试生产会议；先完成运行时安装或 PATH 配置。
+不要在仓库中提交 App Secret、Access Token、Cookie、用户邮箱或真实会议内容。`ou_...` open_id 是应用隔离身份，不能跨应用复制。
 
-### 6.2 飞书应用权限
+## 5. 飞书权限
 
-核心权限：
+### 5.1 核心权限
 
-| 能力 | 飞书 Scope | 使用场景 |
+| 能力 | 权限 Scope | 何时需要 |
 | --- | --- | --- |
-| Bot 加入或离开会议 | `vc:meeting.bot.join:write` | 必需 |
-| 读取会议事件和转写 | `vc:meeting.meetingevent:read` | 必需 |
-| 发送会中文字消息 | `vc:meeting.message:write` | proxy / assistant 模式 |
-| 发送私聊升级和交付纪要 | `im:message:send_as_bot` 或 `im:message` | 私聊决策、IM 回报 |
-| 接收主人私聊回复 | `im:message.p2p_msg:readonly` | 私聊决策升级 |
-| 接收群聊 @ 消息 | `im:message.group_at_msg:readonly` | 群聊触发 |
+| 应用机器人加入或离开会议 | `vc:meeting.bot.join:write` | 必需 |
+| 读取会中事件和转写 | `vc:meeting.meetingevent:read` | 必需 |
+| 发送入会介绍或经授权的会中消息 | `vc:meeting.message:write` | proxy / assistant 模式 |
+| 私聊升级或通过 IM 回传结果 | `im:message:send_as_bot` 或更宽的 `im:message` | 使用对应功能时 |
+| 接收智能体主人的私聊回复 | `im:message.p2p_msg:readonly` | 启用私聊决策升级时 |
+| 接收群聊 @ 消息 | `im:message.group_at_msg:readonly` | 从群聊触发时 |
 
-建议事件订阅：
+添加权限后，需要发布新的应用版本、在目标租户安装该版本，并保存权限数据范围。VC Agent 的会议拥有者数据范围应与应用可用人员范围一致。
 
-- `vc.bot.meeting_invited_v1`
-- `vc.bot.meeting_activity_v1`
-- `vc.bot.meeting_ended_v1`
-- `im.message.receive_v1`
+推荐事件订阅：
 
-可选权限：
+- `vc.bot.meeting_invited_v1`：被邀请后入会。
+- `vc.bot.meeting_activity_v1`：会中活动监听。
+- `vc.bot.meeting_ended_v1`：会议结束后做最终增量读取。
+- `im.message.receive_v1`：接收 IM 指令和私聊决策回复。
 
-- 日历读取：`calendar:calendar:read`、`calendar:calendar.event:read`
-- 用企业邮箱或手机号解析身份：`contact:user.id:readonly`
-- 实时语音输出：`vc:meeting.bot.realtime:write`
+按会议号和时间主动入会不依赖邀请事件。如果控制台里看不到 VC Scope/事件，或 API 返回 `ErrNotInGray` / `20017`，需要向飞书申请 VC Agent 能力，不能绕过租户授权。
 
-权限变更后需要发布新的飞书应用版本、安装到目标租户，并配置正确的数据范围。VC Agent 可能受应用类型、租户或灰度资格限制；控制台找不到 Scope，或 API 返回 `ErrNotInGray` / `20017` 时，应申请官方能力，不要尝试绕过。
+### 5.2 可选权限
 
-### 6.3 身份配置
+- 日历发现：`calendar:calendar:read`、`calendar:calendar.event:read`。用户直接提供会议号和开始时间时不需要。
+- 通过企业邮箱或手机号解析人员：`contact:user.id:readonly`。
+- 实时语音输出：`vc:meeting.bot.realtime:write`、会议侧“允许 AI 智能体发言”开关，以及独立实现的音频会话。当前 Skill 只发送文字。
 
-- 从智能体主人的企业邮箱或 `union_id` 开始解析身份。
-- 在目标飞书应用下重新获取并验证 `open_id`。
-- `ou_...` 是应用隔离标识，禁止从另一个应用复制。
-- 决策私聊必须发给已验证主人，不能根据会议显示名或转写文本猜测身份。
-- App Secret、Token 和 Cookie 只放在运行时的安全配置中，不写入 Skill 或 Git。
+## 6. 运行链路
 
-### 6.4 上线前冒烟测试
+```text
+用户提供会议 ID/链接、时间与模式
+  → 宿主校验输入、权限和已验证的智能体主人身份
+  → 到会议时间触发 Skill（或立即执行）
+  → join-and-greet.ts 入会并按模式发送一次介绍
+  → poll-meeting-events.ts 持续读取会议事件
+  → 宿主整理发言、决策、TODO、风险和采集限制
+  → 必要且已启用时，私聊智能体主人做阻塞决策升级
+  → 会议结束后做一次最终读取
+  → 通过宿主的标准交付接口发送一次纪要与任务草稿
+```
 
-先使用无敏感内容的测试会议：
+Skill 自带的通用 helper：
 
 ```bash
-bun "${CODEX_HOME:-$HOME/.codex}/skills/feishu-meeting-attendee/scripts/join-and-greet.ts" \
-  '<meeting-number>' --mode silent --dry-run
+bun scripts/join-and-greet.ts --help
+bun scripts/poll-meeting-events.ts --help
+bun scripts/send-message.ts --help
 ```
 
-Windows PowerShell（Codex 目录安装）：
+## 7. 上线前冒烟测试
 
-```powershell
-$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-bun "$CodexRoot\skills\feishu-meeting-attendee\scripts\join-and-greet.ts" `
-  '<meeting-number>' --mode silent --dry-run
-```
+使用不含敏感信息的测试会议：
 
-然后依次验证：
+1. 先检查入会命令，不产生外部写入：
 
-1. `silent` 模式能够加入测试会议并返回长格式 `meetingId`。
-2. 单次事件读取能看到测试会议事件或转写。
-3. `proxy` 模式只发送一次介绍消息。
-4. 如启用私聊决策升级，只接受已验证主人的回复。
-5. 会议结束后只回报一次纪要和 TODO 草稿。
+   ```bash
+   bun scripts/join-and-greet.ts 123456789 --mode silent --dry-run
+   ```
 
-写入结果不确定时停止自动重试，先检查会议聊天或私聊，避免重复发言。
+2. 开始测试会议，以 `silent` 模式真实入会，确认返回长格式 `meetingId`。
+3. 单次读取会议事件：
 
-## 7. 升级
+   ```bash
+   bun scripts/poll-meeting-events.ts '<meetingId>' --once
+   ```
 
-Botmux registry 安装可直接执行：
+4. 测试 `proxy` 模式，确认介绍只发送一次。
+5. 验证轮询会跨越短暂无发言继续运行，并在会议结束后做最终读取。
+6. 如启用私聊决策升级，仅向已验证的智能体主人发送非约束性测试问题，并确认其他发送者的回复会被忽略。
+7. 确认最终结果只回传一次，缺失的负责人或截止时间标为“待明确”。
 
-```bash
-botmux skills update feishu-meeting-attendee
-botmux skills inspect feishu-meeting-attendee
-```
+外部写入结果不确定时停止自动重试，先检查会议或聊天记录。
 
-如果用 Codex Skill Installer 安装，重复执行安装命令前先查看安装器是否支持覆盖；不支持时使用 Git 工作副本升级。
+## 8. 升级与停用
 
-Git 工作副本升级：
+升级前先查看仓库变更。Git 安装可重新拉取仓库，再把完整 Skill 目录覆盖到目标位置；重启智能体会话后重新运行冒烟测试。
+
+需要暂时停用时，移动到备份目录，避免不可恢复删除：
 
 macOS / Linux：
 
 ```bash
-cd Agent-Skill-Hub
-git pull --ff-only
-cp -R skills/feishu-meeting-attendee "${CODEX_HOME:-$HOME/.codex}/skills/"
+mv "$HOME/.claude/skills/feishu-meeting-attendee" \
+  "$HOME/.claude/skills/feishu-meeting-attendee.disabled"
 ```
 
 Windows PowerShell：
 
 ```powershell
-Set-Location .\Agent-Skill-Hub
-git pull --ff-only
-$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-Copy-Item ".\skills\feishu-meeting-attendee" -Destination "$CodexRoot\skills" -Recurse -Force
+Move-Item "$HOME\.claude\skills\feishu-meeting-attendee" `
+  "$HOME\.claude\skills\feishu-meeting-attendee.disabled"
 ```
 
-升级前先备份本地自定义内容；更推荐把通用改进贡献回仓库，避免在安装目录长期维护分叉。升级后重启智能体会话并重新执行安装验证。
-
-## 8. 停用或回退
-
-优先把本机 Skill 移到备份目录，确认无依赖后再按所在组织的文件管理流程处理。该操作不会撤销飞书应用权限、删除会议数据或停用 Botmux。
-
-macOS / Linux（Codex）：
-
-```bash
-mv "${CODEX_HOME:-$HOME/.codex}/skills/feishu-meeting-attendee" \
-  "${CODEX_HOME:-$HOME/.codex}/skills/feishu-meeting-attendee.disabled"
-```
-
-Windows PowerShell（Codex）：
-
-```powershell
-$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-Move-Item "$CodexRoot\skills\feishu-meeting-attendee" `
-  "$CodexRoot\skills\feishu-meeting-attendee.disabled"
-```
-
-执行前确认源路径与目标路径准确，且目标备份目录不存在。若需要彻底停用完整能力，还应在飞书开放平台撤销应用版本或权限，并按所在组织流程停用相关运行时。
+请按实际宿主目录替换示例路径。移动 Skill 不会撤销飞书权限或清除外部数据；这些需要在对应管理后台单独处理。
 
 ## 9. 常见问题
 
-### 智能体找不到 Skill
+### 安装后智能体找不到 Skill
 
-- 检查 `SKILL.md` 是否位于 `<skills-root>/feishu-meeting-attendee/SKILL.md`。
-- 确认没有多复制一层同名目录。
-- 完全重启智能体会话。
-- 检查当前版本是否支持用户级 Skill，或是否配置了自定义 Skill 根目录。
+- 确认目录名是 `feishu-meeting-attendee`，入口文件是该目录根部的 `SKILL.md`。
+- 确认 `scripts/`、`references/` 和 `assets/` 一并复制。
+- 重启智能体会话，并检查宿主的 Skill 搜索路径。
 
-### `bun`、`botmux` 或 `lark-cli` 找不到
+### `bun` 或 `lark-cli` 找不到
 
-- 重新打开终端，让 PATH 生效。
-- 用 `Get-Command <name>`（Windows）或 `command -v <name>`（macOS / Linux）检查路径。
-- 服务器进程的 PATH 可能不同于交互式 Shell；在服务配置里使用明确的可执行文件路径。
+- 用运行智能体的同一系统账号执行版本检查。
+- 检查 PATH；服务进程的 PATH 可能与交互式终端不同。
+- Windows 安装后重新打开 PowerShell。
 
-### 能加载 Skill，但无法入会
+### 能入会但读不到转写
 
-- 检查会议号码或链接是否可加入；长格式内部 `meeting.id` 不能代替会议号码。
-- 检查飞书应用版本是否已发布并安装到目标租户。
-- 检查 VC Agent Scope、事件订阅和数据范围。
-- 出现 `ErrNotInGray` / `20017` 时申请 VC Agent 资格。
+- 检查 `vc:meeting.meetingevent:read`、应用版本和数据范围。
+- 确认目标租户已安装最新应用版本。
+- 确认会议和租户已开通 VC Agent 能力。
 
-### 能入会，但没有转写或纪要不完整
+### 定时任务触发但没有完整纪要
 
-- 检查 `vc:meeting.meetingevent:read` 和事件订阅。
-- 确认轮询进程持续运行到会议结束，且结束时做了最终增量读取。
-- 在纪要中明确覆盖时间和采集限制，不根据缺失内容猜测。
+- 确认宿主能保持轮询会话，不会在短暂无发言时回收进程。
+- 检查会议结束事件以及最终单次读取是否执行。
+- 报告实际覆盖时间和断连，不要把部分记录描述成完整会议。
 
-## 10. 发布检查清单
+## 10. 上线检查清单
 
-- [ ] Skill 已安装到正确目录，智能体重启后能够发现。
-- [ ] Bun、Botmux、lark-cli 在运行账号下可执行。
-- [ ] 飞书 Scope、事件订阅、版本发布和数据范围均已完成。
-- [ ] 主人身份在当前飞书应用下重新验证。
-- [ ] 无敏感内容的 silent / proxy 冒烟测试通过。
-- [ ] 写入失败和结果不确定时不会自动重复发送。
-- [ ] 纪要只回报一次，缺失负责人或截止时间标记为“待明确”。
-
-Skill 内部的更详细运行规则见 [`skills/feishu-meeting-attendee/references/deployment.md`](../skills/feishu-meeting-attendee/references/deployment.md)。
+- [ ] 完整 Skill 目录已安装，宿主能发现 `SKILL.md`。
+- [ ] Bun 和 lark-cli 在运行账号下可执行。
+- [ ] 宿主能保持轮询进程，并在需要时按时触发。
+- [ ] 飞书应用权限、版本和数据范围均已生效。
+- [ ] VC Agent 能力已开通。
+- [ ] 智能体主人身份在当前应用下验证，未跨应用复用 open_id。
+- [ ] 三种模式和幂等消息在测试会议中通过。
+- [ ] 私聊升级默认关闭，开启时只联系已验证身份。
+- [ ] 纪要、TODO、风险、采集限制和待确认项格式符合预期。
+- [ ] 仓库和日志中没有密钥或真实会议内容。
 
 ## 11. 官方参考
 
-- [OpenAI Skills 指南](https://developers.openai.com/api/docs/guides/tools-skills)
-- [Claude Code Skills](https://code.claude.com/docs/en/skills)
-- [Gemini CLI Agent Skills](https://geminicli.com/docs/cli/skills/)
-- [Bun 安装说明](https://bun.sh/docs/installation)
-- [Botmux 快速接入](https://deepcoldy.github.io/botmux/quickstart)
-- [Botmux Skill 管理](https://github.com/deepcoldy/botmux/blob/master/docs/setup/skills.md)
+- [OpenAI Codex Skills](https://developers.openai.com/codex/skills/)
+- [Claude Code Skills](https://docs.anthropic.com/en/docs/claude-code/skills)
+- [Gemini CLI Skills](https://geminicli.com/docs/cli/skills/)
+- [Bun 安装](https://bun.com/docs/installation)
+- [lark-cli Agent Skills](https://github.com/larksuite/cli#agent-skills)

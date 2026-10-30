@@ -60,7 +60,7 @@ When the verified owner explicitly asks to create tasks for this meeting:
 3. Use a stable `--idempotency-key` derived from meeting ID plus the normalized action, so retries cannot duplicate tasks.
 4. Stop on an uncertain write result and report it; do not retry until the existing task is checked.
 
-If the current user identity is not authorized for `lark-cli`, request the required user authorization through the normal Botmux authorization flow (or ask the user to run `/login` in the conversation), then wait for confirmation before retrying. Never replace a missing human authorization with bot identity.
+If the current user identity is not authorized for `lark-cli`, request the required user authorization through the host runtime's normal authorization flow, then wait for verified confirmation before retrying. Never replace a missing human authorization with bot identity.
 
 Useful command shape after explicit approval:
 

@@ -41,22 +41,13 @@ catalog.json     SKILL.md            scripts / references
 
 | Skill | 说明 | 运行依赖 |
 | --- | --- | --- |
-| [feishu-meeting-attendee](skills/feishu-meeting-attendee/) | 飞书会议自动参会、会中监听、受控决策升级、中文纪要与 TODO 草稿 | Botmux、lark-cli、Bun、飞书 VC Agent 权限 |
+| [feishu-meeting-attendee](skills/feishu-meeting-attendee/) | 飞书会议自动参会、会中监听、受控决策升级、中文纪要与 TODO 草稿 | lark-cli、Bun、可持续运行脚本的智能体宿主、飞书 VC Agent 权限 |
 
 机器可读索引见 [catalog.json](catalog.json)。
 
 ## 快速开始
 
-已使用 Botmux 的环境可直接安装仓库中的 Skill：
-
-```bash
-botmux skills install github:yousay123/Agent-Skill-Hub/skills/feishu-meeting-attendee
-botmux skills inspect feishu-meeting-attendee
-```
-
-然后在 Botmux 的 Skills 页面把它分配给目标机器人，或在与机器人的会话中执行 `/skills attach feishu-meeting-attendee`。
-
-仅安装到 Codex 时，macOS 或 Linux 可执行：
+安装到 Codex 时，macOS 或 Linux 可执行：
 
 ```bash
 CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
@@ -75,6 +66,15 @@ py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.
 ```
 
 安装后重新打开智能体会话，再用自然语言提出参会请求。首次部署还需要配置飞书应用、运行依赖和权限。
+
+Gemini CLI 可使用原生 Skill 安装命令：
+
+```bash
+gemini skills install https://github.com/yousay123/Agent-Skill-Hub.git \
+  --path skills/feishu-meeting-attendee --scope user
+```
+
+Claude Code 或其他支持 `SKILL.md` 的智能体，可把完整 Skill 目录复制到对应的用户级 Skills 目录；不同运行时的路径和跨平台命令见完整手册。
 
 完整说明见 [安装与部署手册](docs/INSTALL.md)，其中包含：
 

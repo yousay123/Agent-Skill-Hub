@@ -10,7 +10,7 @@ function optionValue(args: string[], name: string): string | undefined {
 
 function stableUuid(meetingId: string, key: string): string {
   const chars = createHash('sha256')
-    .update(`botmux-feishu-meeting-attendee:message:v1:${meetingId}:${key}`)
+    .update(`agent-skill-hub:feishu-meeting-attendee:message:v1:${meetingId}:${key}`)
     .digest('hex').slice(0, 32).split('');
   chars[12] = '5';
   chars[16] = '8';

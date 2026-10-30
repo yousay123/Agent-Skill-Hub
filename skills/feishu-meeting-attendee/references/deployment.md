@@ -6,7 +6,7 @@ Read this reference before the first use in each Feishu application or tenant.
 
 - Bun for the bundled TypeScript helpers.
 - A managed `lark-cli` binding for the target Feishu application.
-- Botmux with `vc-agent poll` support for persistent event polling and scheduled execution.
+- A host agent/runtime that can keep the bundled event poller alive, optionally schedule a future run, and deliver the final result to the invoking conversation.
 - Feishu VC Agent entitlement. This capability may be restricted by tenant, application type, or gray release.
 
 Installing the Skill does not install these tools or grant external permissions.
@@ -58,7 +58,7 @@ Use a non-sensitive test meeting:
 1. Run `join-and-greet.ts <meeting-number> --mode silent --dry-run`.
 2. Start the meeting and join in `silent` mode.
 3. Confirm that the helper returns a long `meetingId`.
-4. Run one event poll and verify transcript/event visibility.
+4. Run `poll-meeting-events.ts <meetingId> --once` and verify transcript/event visibility.
 5. Test `proxy` mode and confirm exactly one introduction.
 6. If private escalation is enabled, send a non-binding test prompt only to the verified owner and verify that replies from other senders are ignored.
 

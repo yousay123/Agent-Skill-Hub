@@ -35,7 +35,7 @@ function meetingNumberFrom(value: string): string | undefined {
 
 function stableGreetingUuid(meetingId: string, greeting: string): string {
   const chars = createHash('sha256')
-    .update(`botmux-feishu-meeting-attendee:greeting:v2:${meetingId}:${greeting}`)
+    .update(`agent-skill-hub:feishu-meeting-attendee:greeting:v2:${meetingId}:${greeting}`)
     .digest('hex')
     .slice(0, 32)
     .split('');
