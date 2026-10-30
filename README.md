@@ -1,6 +1,23 @@
 # Agent Skill Hub
 
-面向 AI 智能体的可复用 Skill 集中站。每个 Skill 都是一个独立目录，入口文件为 `SKILL.md`，可按需携带 `scripts/`、`references/`、`assets/` 和 `agents/`。
+面向 AI 智能体的可复用 Skill 集中站。仓库以统一目录规范管理可发现、可安装、可验证的智能体能力；每个 Skill 都是独立单元，入口文件为 `SKILL.md`，并可按需携带脚本、参考规则和输出素材。
+
+## 项目目标
+
+- 让 Codex、Claude Code、Gemini CLI 等支持 Skill 目录的智能体复用同一套能力。
+- 把运行步骤、权限边界、依赖和验证方式随 Skill 一起交付。
+- 通过机器可读的 `catalog.json` 支持后续检索、安装器和管理平台接入。
+- 避免把个人账号、租户身份、密钥或特定会议信息固化进公共 Skill。
+
+## 工作方式
+
+```text
+发现 Skill → 安装到智能体目录 → 重启会话并触发 Skill
+     ↓              ↓                    ↓
+catalog.json     SKILL.md            scripts / references
+```
+
+安装 Skill 只会把能力说明和辅助文件放入智能体目录；外部系统账号、应用权限和运行依赖仍需按对应 Skill 的部署文档配置。
 
 ## 目录结构
 
@@ -9,6 +26,8 @@
 ├── README.md
 ├── CONTRIBUTING.md
 ├── catalog.json
+├── docs/
+│   └── INSTALL.md
 └── skills/
     └── <skill-name>/
         ├── SKILL.md
@@ -26,31 +45,50 @@
 
 机器可读索引见 [catalog.json](catalog.json)。
 
-## 安装
+## 快速开始
 
-### 安装单个 Skill
+已使用 Botmux 的环境可直接安装仓库中的 Skill：
 
 ```bash
-python3 "$CODEX_HOME/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
+botmux skills install github:yousay123/Agent-Skill-Hub/skills/feishu-meeting-attendee
+botmux skills inspect feishu-meeting-attendee
+```
+
+然后在 Botmux 的 Skills 页面把它分配给目标机器人，或在与机器人的会话中执行 `/skills attach feishu-meeting-attendee`。
+
+仅安装到 Codex 时，macOS 或 Linux 可执行：
+
+```bash
+CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
+python3 "$CODEX_ROOT/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo yousay123/Agent-Skill-Hub \
   --path skills/feishu-meeting-attendee
 ```
 
-也可以把完整目录复制到目标 Agent 的 Skill 目录，例如：
+Windows PowerShell 可执行：
 
-- Codex：`~/.codex/skills/`
-- Claude Code：`~/.claude/skills/`
-- Gemini CLI：`~/.gemini/skills/`
-- 项目级共享：`<project>/skills/`
+```powershell
+$CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
+  --repo yousay123/Agent-Skill-Hub `
+  --path skills/feishu-meeting-attendee
+```
 
-安装后重新打开会话，让 Agent 重新发现 Skill。
+安装后重新打开智能体会话，再用自然语言提出参会请求。首次部署还需要配置飞书应用、运行依赖和权限。
 
-## 使用前检查
+完整说明见 [安装与部署手册](docs/INSTALL.md)，其中包含：
 
-- 阅读目标 Skill 的 `SKILL.md` 和它链接的相关 reference。
-- 配置该 Skill 声明的 CLI、应用权限和用户身份。
+- macOS、Windows、Linux 的环境准备和具体命令；
+- Codex、Claude Code、Gemini CLI 的安装目录；
+- 安装验证、升级、卸载与故障排查；
+- `feishu-meeting-attendee` 的飞书权限和上线检查清单。
+
+## 安全边界
+
 - 不跨飞书应用复用 `ou_...` open_id；它是应用隔离的身份。
-- 对外部写操作、审批、费用、生产变更和敏感数据保持原有授权边界。
+- 不在仓库中保存 App Secret、Access Token、Cookie、个人邮箱或真实会议内容。
+- 安装 Skill 不等于获得外部系统权限，也不扩大原智能体的授权范围。
+- 对外部写操作、审批、费用、生产变更和敏感数据继续执行原有确认流程。
 
 ## 贡献
 
