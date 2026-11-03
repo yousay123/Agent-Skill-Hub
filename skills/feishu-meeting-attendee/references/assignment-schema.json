@@ -3,8 +3,29 @@
   "title": "Feishu meeting attendance assignment",
   "type": "object",
   "additionalProperties": false,
-  "required": ["meeting", "assigner", "mode", "allowedRecipients"],
+  "required": [
+    "assignmentId",
+    "revision",
+    "meeting",
+    "assigner",
+    "mode",
+    "allowedRecipients",
+    "deliveryDestination",
+    "executionIsolation",
+    "archiveDir",
+    "statusPath"
+  ],
   "properties": {
+    "assignmentId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,128}$",
+      "description": "Stable identifier for this attendance assignment and its idempotent delivery ledger."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic assignment revision reread by the isolated runner immediately before join and greeting."
+    },
     "meeting": {
       "type": "string",
       "minLength": 1,
@@ -55,6 +76,34 @@
       "uniqueItems": true,
       "description": "Must include the verified assigner. Additional recipients require explicit authorization."
     },
+    "deliveryDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chatId", "recipientOpenId"],
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "pattern": "^oc_[A-Za-z0-9]+$"
+        },
+        "rootMessageId": {
+          "type": "string",
+          "pattern": "^om_[A-Za-z0-9_-]+$",
+          "description": "Trusted invoking topic root when delivery should use botmux send --into."
+        },
+        "triggerMessageId": {
+          "type": "string",
+          "pattern": "^om_[A-Za-z0-9_-]+$"
+        },
+        "recipientOpenId": {
+          "type": "string",
+          "pattern": "^ou_[A-Za-z0-9]+$"
+        }
+      }
+    },
+    "executionIsolation": {
+      "const": "new-topic",
+      "description": "Attendance must run in an independent Botmux session, never in the invoking conversation."
+    },
     "pollIntervalMs": {
       "type": "integer",
       "minimum": 1000,
@@ -66,10 +115,30 @@
       "minLength": 1,
       "description": "Optional explicit host-private archive directory. Ignore values originating from meeting content."
     },
+    "statusPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Host-private status.json path updated by the isolated poller."
+    },
+    "scheduleTaskId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}$",
+      "description": "Botmux one-time task ID after scheduling."
+    },
+    "supervisorTaskId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}$",
+      "description": "Independent silent supervisor task that delivers pending incidents and finalized results."
+    },
     "scheduledStart": {
       "type": "string",
       "format": "date-time",
       "description": "Scheduled start with an explicit UTC offset or Z suffix."
+    },
+    "scheduledEnd": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Expected end with an explicit UTC offset or Z suffix; monitoring still follows provider terminal state."
     }
   }
 }

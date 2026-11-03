@@ -3,8 +3,8 @@
   "skills": [
     {
       "name": "feishu-meeting-attendee",
-      "version": "1.1.3",
-      "release_tag": "feishu-meeting-attendee-v1.1.3",
+      "version": "1.2.0",
+      "release_tag": "feishu-meeting-attendee-v1.2.0",
       "path": "skills/feishu-meeting-attendee",
       "category": "automation-and-integration",
       "summary": "Attend Feishu/Lark meetings, monitor meeting events, escalate blocking owner decisions, and produce Chinese minutes plus TODO drafts.",
@@ -21,7 +21,7 @@
       "dependencies": [
         "lark-cli",
         "bun",
-        "host agent/runtime with persistent polling and optional scheduling",
+        "Botmux host with persistent schedule/send commands and isolated new-topic sessions",
         "Feishu VC Agent entitlement and application permissions"
       ],
       "entrypoint": "SKILL.md"

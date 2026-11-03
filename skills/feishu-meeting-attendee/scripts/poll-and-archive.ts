@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -57,6 +57,8 @@ interface ArchivedEventRecord {
   event: unknown;
 }
 
+type RuntimePhase = 'monitoring' | 'finalized' | 'action_required' | 'interrupted';
+
 const argv = process.argv.slice(2);
 
 function option(name: string): string | undefined {
@@ -90,7 +92,7 @@ function positionalMeetingId(): string | undefined {
 
 const meetingId = positionalMeetingId()?.trim();
 if (!meetingId) {
-  process.stderr.write('Usage: poll-and-archive.ts <meetingId> [--assigner-ref ou_...] [--archive-dir DIR] [--poll-ms N] [--max-hours N] [--max-polls N] [--profile NAME]\n');
+  process.stderr.write('Usage: poll-and-archive.ts <meetingId> [--assigner-ref ou_...] [--assignment-id ID] [--archive-dir DIR] [--status-path FILE] [--poll-ms N] [--provider-timeout-ms N] [--max-hours N] [--max-polls N] [--profile NAME]\n');
   process.exit(2);
 }
 
@@ -98,10 +100,15 @@ const pollMs = positiveNumber('--poll-ms', 5_000, 1_000, 300_000);
 const maxHours = positiveNumber('--max-hours', 4, 0.01, 48);
 const maxPolls = Math.floor(positiveNumber('--max-polls', Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER));
 const maxConsecutiveFailures = Math.floor(positiveNumber('--max-consecutive-failures', 5, 1, 20));
+const providerTimeoutMs = positiveNumber('--provider-timeout-ms', 30_000, 1_000, 300_000);
 const profile = option('--profile')?.trim();
 const assignerRef = option('--assigner-ref')?.trim();
 if (assignerRef && !/^ou_[A-Za-z0-9]+$/.test(assignerRef)) {
   throw new Error('--assigner-ref must be a verified Feishu open_id');
+}
+const assignmentId = option('--assignment-id')?.trim();
+if (assignmentId && !/^[A-Za-z0-9_-]{8,128}$/.test(assignmentId)) {
+  throw new Error('--assignment-id must contain 8-128 letters, digits, underscores, or hyphens');
 }
 const explicitArchiveDir = option('--archive-dir');
 const meetingKey = createHash('sha256').update(meetingId).digest('hex').slice(0, 20);
@@ -114,6 +121,11 @@ const eventsPath = join(archiveDir, 'events.ndjson');
 const errorPath = join(archiveDir, 'errors.ndjson');
 const logPath = join(archiveDir, 'poll.ndjson');
 const finalPath = join(archiveDir, 'final.json');
+const manifestPath = join(archiveDir, 'manifest.json');
+const explicitStatusPath = option('--status-path');
+const statusPath = resolve(explicitStatusPath
+  ? explicitStatusPath.replace(/^~(?=\/|$)/, homedir())
+  : join(archiveDir, 'status.json'));
 const lockPath = join(archiveDir, '.poll.lock');
 const lockGuardPath = join(archiveDir, '.poll.lock.takeover');
 const lockGuardOwnerPath = join(lockGuardPath, 'owner.json');
@@ -121,6 +133,28 @@ const tornTailPath = join(archiveDir, 'torn-tail.log');
 const probePath = join(archiveDir, 'probes.ndjson');
 const pollerStartedAt = new Date().toISOString();
 const deadline = Date.now() + maxHours * 60 * 60 * 1_000;
+
+const reservedStatusPaths = new Set([
+  archiveDir,
+  rawDir,
+  cursorPath,
+  eventsPath,
+  errorPath,
+  logPath,
+  finalPath,
+  manifestPath,
+  lockPath,
+  lockGuardPath,
+  lockGuardOwnerPath,
+  tornTailPath,
+  probePath,
+]);
+const statusBasename = basename(statusPath);
+if (reservedStatusPaths.has(statusPath)
+  || statusPath.startsWith(`${rawDir}${sep}`)
+  || (dirname(statusPath) === archiveDir && statusBasename.startsWith('notification.'))) {
+  throw new Error('--status-path conflicts with a reserved archive evidence path');
+}
 
 mkdirSync(rawDir, { recursive: true, mode: 0o700 });
 chmodSync(archiveDir, 0o700);
@@ -149,7 +183,18 @@ class LockInterventionError extends Error {
   }
 }
 
+class ArchiveIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArchiveIdentityError';
+  }
+}
+
 let lockOwnership: LockOwnership | undefined;
+let currentProviderProcess: ReturnType<typeof Bun.spawn> | undefined;
+let terminationInProgress = false;
+let signalHandlersRegistered = false;
+let preserveLockEvidence = false;
 
 function appendPrivate(path: string, line: string): void {
   appendFileSync(path, line, { encoding: 'utf8', mode: 0o600 });
@@ -168,9 +213,52 @@ function log(level: 'info' | 'warn' | 'alert', event: string, details: JsonRecor
 function atomicWrite(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temp, contents, { encoding: 'utf8', mode: 0o600 });
-  renameSync(temp, path);
-  chmodSync(path, 0o600);
+  try {
+    writeFileSync(temp, contents, { encoding: 'utf8', mode: 0o600 });
+    renameSync(temp, path);
+    chmodSync(path, 0o600);
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The successful rename already consumed the temp path.
+    }
+  }
+}
+
+function archiveContainsLegacyEvidence(): boolean {
+  const evidencePaths = [cursorPath, eventsPath, errorPath, logPath, finalPath, tornTailPath, probePath];
+  if (evidencePaths.some(path => existsSync(path))) return true;
+  return readdirSync(rawDir).length > 0;
+}
+
+function ensureArchiveIdentity(): void {
+  if (!existsSync(manifestPath)) {
+    if (archiveContainsLegacyEvidence()) {
+      throw new ArchiveIdentityError('archive contains evidence but has no immutable manifest; use a new archive directory or perform a reviewed migration');
+    }
+    atomicWrite(manifestPath, JSON.stringify({
+      schemaVersion: 1,
+      meetingKey,
+      assignmentId: assignmentId ?? null,
+      createdAt: new Date().toISOString(),
+    }, null, 2) + '\n');
+    return;
+  }
+
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch (error) {
+    throw new ArchiveIdentityError(`archive manifest is unreadable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const expectedAssignmentId = assignmentId ?? null;
+  if (!isRecord(manifest)
+    || manifest.schemaVersion !== 1
+    || manifest.meetingKey !== meetingKey
+    || (manifest.assignmentId ?? null) !== expectedAssignmentId) {
+    throw new ArchiveIdentityError('archive manifest does not match this meeting and assignment; refusing to read or append evidence');
+  }
 }
 
 interface NotificationReceipt {
@@ -235,6 +323,41 @@ function persistPendingNotification(
   }
 }
 
+function ensurePendingNotification(
+  status: 'action_required' | 'invalid_meeting',
+  reason: string,
+  recommendedAction: string,
+): NotificationReceipt {
+  const primary = persistPendingNotification(status, reason, recommendedAction);
+  if (primary.persisted) return primary;
+
+  const incidentId = `${pollerStartedAt}:${cursor.committedBatch}`;
+  const fallbackPath = join(archiveDir, `notification.pending.fallback-${primary.dedupKey}.json`);
+  try {
+    if (existsSync(fallbackPath)) {
+      const existing: unknown = JSON.parse(readFileSync(fallbackPath, 'utf8'));
+      if (isRecord(existing) && existing.dedupKey === primary.dedupKey) {
+        return { path: fallbackPath, dedupKey: primary.dedupKey, persisted: true };
+      }
+      return primary;
+    }
+    atomicWrite(fallbackPath, JSON.stringify({
+      schemaVersion: 1,
+      status,
+      reason: reason.slice(0, 2_000),
+      assignerRef: assignerRef ?? null,
+      recommendedAction,
+      createdAt: new Date().toISOString(),
+      incidentId,
+      dedupKey: primary.dedupKey,
+      fallback: true,
+    }, null, 2) + '\n');
+    return { path: fallbackPath, dedupKey: primary.dedupKey, persisted: true };
+  } catch {
+    return primary;
+  }
+}
+
 function emitResult(result: JsonRecord): void {
   process.stdout.write(JSON.stringify(result) + '\n');
 }
@@ -255,6 +378,34 @@ function readOwnerPid(value: unknown): number | undefined {
   return isRecord(value) && Number.isSafeInteger(value.pid) && Number(value.pid) > 0
     ? Number(value.pid)
     : undefined;
+}
+
+function hasDurableNotificationEvidence(): boolean {
+  for (const entry of readdirSync(archiveDir)) {
+    if ((!entry.startsWith('notification.pending.') && !entry.startsWith('notification.sent.'))
+      || !entry.endsWith('.json')) continue;
+    try {
+      const value: unknown = JSON.parse(readFileSync(join(archiveDir, entry), 'utf8'));
+      if (isRecord(value)
+        && typeof value.dedupKey === 'string'
+        && (value.status === 'action_required' || value.status === 'invalid_meeting')) return true;
+    } catch {
+      // A directory, malformed record, or transient read failure is not durable delivery evidence.
+    }
+  }
+  return false;
+}
+
+function staleLockNeedsNotificationRecovery(): boolean {
+  try {
+    const status: unknown = JSON.parse(readFileSync(statusPath, 'utf8'));
+    return isRecord(status)
+      && status.phase === 'interrupted'
+      && status.notificationPersisted === false
+      && !hasDurableNotificationEvidence();
+  } catch {
+    return !hasDurableNotificationEvidence();
+  }
 }
 
 function inspectContendedGuard(): never {
@@ -365,6 +516,9 @@ function acquireArchiveLock(): LockOwnership {
     if (processExists(pid)) {
       throw new AlreadyRunningError(`another archive poller (pid ${pid}) owns ${lockPath}; PID reuse also fails closed intentionally`);
     }
+    if (staleLockNeedsNotificationRecovery()) {
+      throw new LockInterventionError('previous interrupted poller could not persist a notification; recover notification delivery before stale-lock takeover');
+    }
 
     const stalePath = `${lockPath}.stale-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}`;
     renameSync(lockPath, stalePath);
@@ -427,7 +581,32 @@ function providerPayload(result: CommandResult): unknown | undefined {
   return stderrPayload ?? stdoutPayload;
 }
 
-async function runLarkCli(args: string[]): Promise<CommandResult> {
+async function stopProviderProcess(
+  child: ReturnType<typeof Bun.spawn>,
+  signal: 'SIGINT' | 'SIGTERM' = 'SIGTERM',
+): Promise<boolean> {
+  try {
+    child.kill(signal);
+  } catch {
+    // It may already have exited between observation and shutdown.
+  }
+  const exitedAfterSoftKill = await Promise.race([
+    child.exited.then(() => true),
+    Bun.sleep(500).then(() => false),
+  ]);
+  if (exitedAfterSoftKill) return true;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // It may have exited just before escalation.
+  }
+  return Promise.race([
+    child.exited.then(() => true),
+    Bun.sleep(500).then(() => false),
+  ]);
+}
+
+async function runLarkCli(args: string[], timeoutMs = providerTimeoutMs): Promise<CommandResult> {
   const executable = process.env.FEISHU_MEETING_LARK_CLI?.trim() || 'lark-cli';
   const child = Bun.spawn([executable, ...args], {
     stdout: 'pipe',
@@ -438,14 +617,34 @@ async function runLarkCli(args: string[]): Promise<CommandResult> {
       LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
     },
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
+  currentProviderProcess = child;
+  const output = Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  const result: CommandResult = { exitCode, stdout, stderr };
-  result.payload = providerPayload(result);
-  return result;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      output.then(() => 'completed' as const),
+      new Promise<'timed_out'>(resolveTimeout => {
+        timeoutHandle = setTimeout(() => resolveTimeout('timed_out'), timeoutMs);
+      }),
+    ]);
+    if (outcome === 'timed_out') await stopProviderProcess(child);
+    const [stdout, stderr, observedExitCode] = await output;
+    if (terminationInProgress) await new Promise<never>(() => {});
+    const exitCode = outcome === 'timed_out' ? 124 : observedExitCode;
+    const result: CommandResult = { exitCode, stdout, stderr };
+    if (outcome === 'timed_out') {
+      result.stderr = `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}provider command timed out after ${timeoutMs}ms`;
+    }
+    result.payload = providerPayload(result);
+    return result;
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    if (currentProviderProcess === child) currentProviderProcess = undefined;
+  }
 }
 
 function text(value: unknown): string | undefined {
@@ -684,7 +883,20 @@ function findTranscriptItems(value: unknown, output: JsonRecord[]): void {
   }
 }
 
-function finalize(reason: string, status: 'ended' | 'partial' | 'action_required' | 'invalid_meeting'): void {
+function finalize(
+  reason: string,
+  status: 'ended' | 'partial' | 'action_required' | 'invalid_meeting',
+  notificationOverride?: NotificationReceipt,
+): void {
+  const requiresNotification = status === 'action_required' || status === 'invalid_meeting';
+  const recommendedAction = status === 'invalid_meeting'
+    ? 'Verify the meeting identifier and access, then restart attendance with a correctly bound private archive directory.'
+    : 'Notify the verified assigner privately. After the host re-invites the bot or restores agent access, rerun join-and-greet and poll-and-archive with the same archive directory so polling resumes from the committed cursor.';
+  const notification = requiresNotification
+    ? notificationOverride ?? ensurePendingNotification(status, reason, recommendedAction)
+    : undefined;
+  if (requiresNotification && !notification?.persisted) preserveLockEvidence = true;
+
   const records: ArchivedEventRecord[] = [];
   if (existsSync(eventsPath)) {
     for (const line of readFileSync(eventsPath, 'utf8').split('\n')) {
@@ -728,26 +940,34 @@ function finalize(reason: string, status: 'ended' | 'partial' | 'action_required
       note: coverageNote,
     },
   }, null, 2) + '\n');
-  log(status === 'ended' ? 'info' : 'alert', 'finalized', {
-    status,
-    reason,
-    rawBatches,
-    archivedEventVersions: records.length,
-    transcriptSentences: latestTranscripts.size,
-  });
-  const requiresNotification = status === 'action_required' || status === 'invalid_meeting';
-  const recommendedAction = status === 'invalid_meeting'
-    ? 'Verify the meeting identifier and access, then restart attendance with the same private archive directory when corrected.'
-    : 'Notify the verified assigner privately. After the host re-invites the bot or restores agent access, rerun join-and-greet and poll-and-archive with the same archive directory so polling resumes from the committed cursor.';
-  const notification = requiresNotification
-    ? persistPendingNotification(status, reason, recommendedAction)
-    : undefined;
+  try {
+    log(status === 'ended' ? 'info' : 'alert', 'finalized', {
+      status,
+      reason,
+      rawBatches,
+      archivedEventVersions: records.length,
+      transcriptSentences: latestTranscripts.size,
+    });
+  } catch {
+    // Final evidence and notification must not depend on diagnostic logging.
+  }
+  writeRuntimeStatus(
+    status === 'ended' ? 'finalized' : status === 'partial' ? 'interrupted' : 'action_required',
+    {
+      terminalStatus: status,
+      reason,
+      requiresNotification,
+      ...(notification?.path ? { notificationPendingPath: notification.path } : {}),
+      ...(requiresNotification ? { notificationPersisted: notification?.persisted === true } : {}),
+    },
+  );
   emitResult({
     ok: status === 'ended' || status === 'partial',
     status,
     reason,
     archiveDir,
     finalPath,
+    statusPath,
     rawBatches,
     archivedEventVersions: records.length,
     transcriptSentences: latestTranscripts.size,
@@ -769,7 +989,100 @@ let consecutiveFailures = 0;
 let polls = 0;
 let finalized = false;
 
+function writeRuntimeStatus(phase: RuntimePhase, details: JsonRecord = {}): void {
+  atomicWrite(statusPath, JSON.stringify({
+    schemaVersion: 1,
+    ...(assignmentId ? { assignmentId } : {}),
+    meetingKey,
+    phase,
+    updatedAt: new Date().toISOString(),
+    pid: process.pid,
+    committedBatch: cursor.committedBatch,
+    archiveDir,
+    finalPath,
+    ...(cursor.lastSuccessfulPollAt ? { lastSuccessfulPollAt: cursor.lastSuccessfulPollAt } : {}),
+    ...details,
+  }, null, 2) + '\n');
+}
+
+function unregisterSignalHandlers(): void {
+  if (!signalHandlersRegistered) return;
+  process.off('SIGINT', handleSigint);
+  process.off('SIGTERM', handleSigterm);
+  signalHandlersRegistered = false;
+}
+
+async function handleTermination(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
+  if (terminationInProgress) return;
+  terminationInProgress = true;
+  const providerProcess = currentProviderProcess;
+  if (providerProcess) await stopProviderProcess(providerProcess, signal);
+  const reason = `process_interrupted:${signal}`;
+  const recommendedAction = 'Notify the verified assigner privately. Resume only with the same meeting and assignment-bound archive after checking the capture gap.';
+  let notification: NotificationReceipt | undefined;
+  if (lockOwnership !== undefined && !finalized) {
+    notification = ensurePendingNotification('action_required', reason, recommendedAction);
+    if (!notification.persisted) preserveLockEvidence = true;
+    try {
+      finalize(reason, 'action_required', notification);
+      finalized = true;
+    } catch (error) {
+      try {
+        log('alert', 'signal_finalize_failure', {
+          signal,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Continue to the independent status write below.
+      }
+    }
+    try {
+      writeRuntimeStatus('interrupted', {
+        reason,
+        signal,
+        notificationPendingPath: notification.path,
+        notificationPersisted: notification.persisted,
+      });
+    } catch (error) {
+      try {
+        log('alert', 'signal_status_failure', {
+          signal,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Pending notification or preserved stale lock remains the recovery evidence.
+      }
+    }
+  }
+  if (lockOwnership !== undefined && !preserveLockEvidence) {
+    try {
+      releaseArchiveLock(lockOwnership);
+    } catch {
+      // A stale own lock is safer than deleting unexpected state.
+    }
+    lockOwnership = undefined;
+  }
+  unregisterSignalHandlers();
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+
+function handleSigint(): void {
+  void handleTermination('SIGINT');
+}
+
+function handleSigterm(): void {
+  void handleTermination('SIGTERM');
+}
+
+function registerSignalHandlers(): void {
+  if (signalHandlersRegistered) return;
+  process.on('SIGINT', handleSigint);
+  process.on('SIGTERM', handleSigterm);
+  signalHandlersRegistered = true;
+}
+
 async function main(): Promise<void> {
+  writeRuntimeStatus('monitoring', { pollMs, maxHours });
   log('info', 'polling_started', {
     meetingKey,
     pollMs,
@@ -788,7 +1101,18 @@ async function main(): Promise<void> {
       ...(profile ? ['--profile', profile] : []),
     ];
     const receivedAt = new Date().toISOString();
-    const result = await runLarkCli(args);
+    const remainingDeadlineMs = Math.max(1, deadline - Date.now());
+    const effectiveProviderTimeoutMs = Math.min(providerTimeoutMs, remainingDeadlineMs);
+    writeRuntimeStatus('monitoring', {
+      pollMs,
+      maxHours,
+      providerCall: {
+        stage: 'meeting-events',
+        startedAt: receivedAt,
+        timeoutMs: effectiveProviderTimeoutMs,
+      },
+    });
+    const result = await runLarkCli(args, effectiveProviderTimeoutMs);
     rawSequence += 1;
     const rawName = `${String(rawSequence).padStart(8, '0')}-${receivedAt.replace(/[:.]/g, '-')}-${randomUUID()}.json`;
     writeFileSync(join(rawDir, rawName), JSON.stringify({
@@ -804,6 +1128,16 @@ async function main(): Promise<void> {
     if (problem) {
       appendPrivate(errorPath, JSON.stringify({ timestamp: receivedAt, ...problem }) + '\n');
       log(problem.retryable ? 'warn' : 'alert', 'provider_problem', problem as unknown as JsonRecord);
+      writeRuntimeStatus('monitoring', {
+        pollMs,
+        maxHours,
+        lastProviderProblem: {
+          observedAt: new Date().toISOString(),
+          classification: problem.classification,
+          message: problem.message,
+          timedOut: result.exitCode === 124,
+        },
+      });
       if (!problem.retryable) {
         const status = problem.classification === 'meeting_ended'
           ? 'ended'
@@ -882,6 +1216,7 @@ async function main(): Promise<void> {
       lastSuccessfulPollAt: receivedAt,
     };
     atomicWrite(cursorPath, JSON.stringify(cursor, null, 2) + '\n');
+    writeRuntimeStatus('monitoring', { pollMs, maxHours });
     consecutiveFailures = 0;
     log('info', 'batch_committed', {
       batch: cursor.committedBatch,
@@ -916,6 +1251,8 @@ async function main(): Promise<void> {
 
 try {
   lockOwnership = acquireArchiveLock();
+  registerSignalHandlers();
+  ensureArchiveIdentity();
   cursor = loadCursor();
   rawSequence = maxRawSequence();
   seenEventVersions = loadSeenEventVersions();
@@ -933,7 +1270,7 @@ try {
     } else {
       const reason = `lock_failure: ${message}`;
       const recommendedAction = 'Do not start another poller. Inspect the unreadable or stranded lock state; once resolved, rerun poll-and-archive with the same archive directory.';
-      const notification = persistPendingNotification('action_required', reason, recommendedAction);
+      const notification = ensurePendingNotification('action_required', reason, recommendedAction);
       emitResult({
         ok: false,
         status: 'action_required',
@@ -947,18 +1284,42 @@ try {
       process.exitCode = 1;
     }
   } else {
-    log('alert', 'archive_failure', { message: message.slice(0, 2_000) });
-    if (!finalized) {
+    try {
+      log('alert', 'archive_failure', { message: message.slice(0, 2_000) });
+    } catch {
+      // Continue to durable notification/finalization.
+    }
+    if (error instanceof ArchiveIdentityError) {
+      const reason = `archive_identity_failure: ${message}`;
+      const recommendedAction = 'Do not read or append this archive. Use a new assignment-bound archive directory or perform a reviewed migration of the legacy evidence.';
+      const notification = ensurePendingNotification('action_required', reason, recommendedAction);
+      if (!notification.persisted) preserveLockEvidence = true;
+      emitResult({
+        ok: false,
+        status: 'action_required',
+        reason,
+        requiresNotification: true,
+        recommendedAction,
+        notificationPendingPath: notification.path,
+        notificationDedupKey: notification.dedupKey,
+        notificationPersisted: notification.persisted,
+      });
+    } else if (!finalized) {
       try {
         finalize(`archive_failure: ${message}`, 'action_required');
       } catch (finalizeError) {
-        log('alert', 'finalize_failure', {
-          message: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
-        });
+        try {
+          log('alert', 'finalize_failure', {
+            message: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+          });
+        } catch {
+          // Pending notification or preserved stale lock remains the recovery evidence.
+        }
       }
     }
   }
   if (!(error instanceof AlreadyRunningError)) process.exitCode = 1;
 } finally {
-  if (lockOwnership !== undefined) releaseArchiveLock(lockOwnership);
+  unregisterSignalHandlers();
+  if (lockOwnership !== undefined && !preserveLockEvidence) releaseArchiveLock(lockOwnership);
 }
