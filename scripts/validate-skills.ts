@@ -32,9 +32,17 @@ for (const skill of catalog.skills) {
     const match = new RegExp(`^${name}:\\s*(.+)$`, 'm').exec(frontmatter);
     return match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
   };
+  const metadataField = (name: string): string | undefined => {
+    const block = /^metadata:\s*\n((?:^[ \t]+.*(?:\n|$))*)/m.exec(frontmatter)?.[1];
+    if (!block) return undefined;
+    const match = new RegExp(`^[ \\t]+${name}:\\s*(.+)$`, 'm').exec(block);
+    return match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
+  };
   if (field('name') !== skill.name) throw new Error(`${skill.name}: frontmatter name mismatch`);
   if (!field('description')) throw new Error(`${skill.name}: missing description`);
-  if (field('version') !== skill.version) throw new Error(`${skill.name}: version mismatch with catalog`);
+  if ((field('version') ?? metadataField('version')) !== skill.version) {
+    throw new Error(`${skill.name}: version mismatch with catalog`);
+  }
   if (skill.release_tag !== `${skill.name}-v${skill.version}`) {
     throw new Error(`${skill.name}: release_tag must match name and version`);
   }
