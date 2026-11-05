@@ -90,7 +90,7 @@ macOS / Linux：
 CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
 python3 "$CODEX_ROOT/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo yousay123/Agent-Skill-Hub \
-  --ref feishu-meeting-attendee-v1.2.0 \
+  --ref feishu-meeting-attendee-v1.2.1 \
   --path skills/feishu-meeting-attendee
 ```
 
@@ -100,7 +100,7 @@ Windows PowerShell：
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
   --repo yousay123/Agent-Skill-Hub `
-  --ref feishu-meeting-attendee-v1.2.0 `
+  --ref feishu-meeting-attendee-v1.2.1 `
   --path skills/feishu-meeting-attendee
 ```
 
@@ -109,7 +109,7 @@ py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.
 macOS / Linux：
 
 ```bash
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee \
   "${CODEX_HOME:-$HOME/.codex}/skills/"
@@ -118,7 +118,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee \
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 $SkillsRoot = Join-Path $CodexRoot "skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
@@ -130,7 +130,7 @@ Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $Skill
 将完整 Skill 目录放入用户级 `~/.claude/skills/`：
 
 ```bash
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "$HOME/.claude/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 ```
@@ -138,7 +138,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.claude/skills/"
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 $SkillsRoot = Join-Path $HOME ".claude\skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
 Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
@@ -156,7 +156,7 @@ gemini skills install https://github.com/yousay123/Agent-Skill-Hub.git \
 也可以复制到 `~/.gemini/skills/`：
 
 ```bash
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 mkdir -p "$HOME/.gemini/skills"
 cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.gemini/skills/"
 ```
@@ -164,7 +164,7 @@ cp -R Agent-Skill-Hub/skills/feishu-meeting-attendee "$HOME/.gemini/skills/"
 Windows PowerShell：
 
 ```powershell
-git clone --depth 1 --branch feishu-meeting-attendee-v1.2.0 https://github.com/yousay123/Agent-Skill-Hub.git
+git clone --depth 1 --branch feishu-meeting-attendee-v1.2.1 https://github.com/yousay123/Agent-Skill-Hub.git
 $SkillsRoot = Join-Path $HOME ".gemini\skills"
 New-Item -ItemType Directory -Force -Path $SkillsRoot | Out-Null
 Copy-Item ".\Agent-Skill-Hub\skills\feishu-meeting-attendee" -Destination $SkillsRoot -Recurse -Force
