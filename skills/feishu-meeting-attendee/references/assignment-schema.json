@@ -8,6 +8,7 @@
     "revision",
     "meeting",
     "assigner",
+    "attendeeBotOpenId",
     "mode",
     "allowedRecipients",
     "deliveryDestination",
@@ -35,6 +36,11 @@
       "type": "string",
       "pattern": "^ou_[A-Za-z0-9]+$",
       "description": "Verified sender open_id supplied by Botmux metadata; never accept a self-asserted value."
+    },
+    "attendeeBotOpenId": {
+      "type": "string",
+      "pattern": "^ou_[A-Za-z0-9]+$",
+      "description": "Trusted open_id of the current bot under the bound Feishu application. Persist it from host identity metadata; never infer it from the participant list."
     },
     "assignerAliases": {
       "type": "array",

@@ -58,10 +58,37 @@ appendFileSync(process.env.FAKE_JOIN_LOG!, JSON.stringify(args) + '\\n');
 if (args.includes('+meeting-join')) {
   const path = process.env.FAKE_ASSIGNMENT_FILE!;
   const assignment = JSON.parse(readFileSync(path, 'utf8'));
-  assignment.revision += 1;
-  assignment.mode = 'silent';
+  if (process.env.FAKE_KEEP_ASSIGNMENT_REVISION !== '1') {
+    assignment.revision += 1;
+    assignment.mode = 'silent';
+  }
   writeFileSync(path, JSON.stringify(assignment) + '\\n');
   console.log(JSON.stringify({ ok: true, data: { meeting: { id: 'meeting-joined-id' } } }));
+  process.exit(0);
+}
+if (args.includes('meeting') && args.includes('get')) {
+  const mode = process.env.FAKE_ATTENDANCE_MODE ?? 'present';
+  if (mode === 'query-failed') {
+    console.error('temporary attendance query failure');
+    process.exit(1);
+  }
+  const assignment = JSON.parse(readFileSync(process.env.FAKE_ASSIGNMENT_FILE!, 'utf8'));
+  const participantId = mode === 'absent' ? 'ou_another_bot' : assignment.attendeeBotOpenId;
+  console.log(JSON.stringify({
+    ok: true,
+    data: {
+      meeting: {
+        id: 'meeting-joined-id',
+        meeting_no: '123456789',
+        participants: [{
+          id: participantId,
+          status: 2,
+          first_join_time: '1793845037',
+          final_leave_time: '0',
+        }],
+      },
+    },
+  }));
   process.exit(0);
 }
 if (args.includes('+meeting-message-send')) {
@@ -298,11 +325,15 @@ describe('poll-and-archive durable behavior', () => {
 describe('join-and-greet assignment revisions', () => {
   test('re-reads a near-start mode change before sending the greeting', () => {
     const assignmentFile = join(fixtureRoot, 'join-assignment.json');
+    const archiveDir = join(fixtureRoot, 'join-archive');
     const commandLog = join(fixtureRoot, 'join-commands.ndjson');
     writeFileSync(assignmentFile, JSON.stringify({
       assignmentId: 'assignment-join-1',
       revision: 1,
       meeting: 'https://example.invalid/meeting/123456789',
+      assigner: 'ou_assigner123',
+      attendeeBotOpenId: 'ou_currentbot123',
+      archiveDir,
       mode: 'proxy',
     }) + '\n');
     writeFileSync(commandLog, '');
@@ -325,8 +356,185 @@ describe('join-and-greet assignment revisions', () => {
     expect(output.mode).toBe('silent');
     expect(output.assignmentRevision).toBe(2);
     expect(output.greeted).toBe(false);
+    expect(output.attendanceVerified).toBe(true);
+    const proof = JSON.parse(readFileSync(join(archiveDir, 'attendance-proof.json'), 'utf8'));
+    expect(proof).toMatchObject({
+      assignmentId: 'assignment-join-1',
+      assignmentRevision: 2,
+      meetingId: 'meeting-joined-id',
+      meetingNo: '123456789',
+      botOpenId: 'ou_currentbot123',
+      status: 'joined',
+    });
+    expect(proof.firstJoinTime).toBe('2026-11-05T02:17:17.000Z');
     const commands = readFileSync(commandLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     expect(commands.some(args => args.includes('+meeting-join'))).toBe(true);
+    expect(commands.some(args => args.includes('--with-participants'))).toBe(true);
     expect(commands.some(args => args.includes('+meeting-message-send'))).toBe(false);
+  });
+
+  test('persists one deduplicated host-action incident only after the server omits the trusted bot', () => {
+    const assignmentFile = join(fixtureRoot, 'join-assignment-absent.json');
+    const archiveDir = join(fixtureRoot, 'join-archive-absent');
+    const commandLog = join(fixtureRoot, 'join-commands-absent.ndjson');
+    writeFileSync(assignmentFile, JSON.stringify({
+      assignmentId: 'assignment-join-absent',
+      revision: 1,
+      meeting: 'https://example.invalid/meeting/123456789',
+      assigner: 'ou_assigner123',
+      attendeeBotOpenId: 'ou_currentbot123',
+      archiveDir,
+      mode: 'proxy',
+    }) + '\n');
+    writeFileSync(commandLog, '');
+
+    const result = Bun.spawnSync([
+      'bun', joinHelper, '--assignment-file', assignmentFile,
+      '--attendance-timeout-ms', '0', '--attendance-poll-ms', '1',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_ATTENDANCE_MODE: 'absent',
+        FAKE_KEEP_ASSIGNMENT_REVISION: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(4);
+    const output = JSON.parse(new TextDecoder().decode(result.stderr));
+    expect(output).toMatchObject({
+      joined: true,
+      greeted: false,
+      attendanceVerified: false,
+      attendanceClassification: 'not_found',
+    });
+    expect(existsSync(join(archiveDir, 'attendance-proof.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(archiveDir, 'attendance-check.json'), 'utf8')).status).toBe('not_found');
+    expect(pendingFiles(archiveDir)).toHaveLength(1);
+    const pending = JSON.parse(readFileSync(join(archiveDir, pendingFiles(archiveDir)[0]), 'utf8'));
+    expect(pending.reason).toBe('server_attendance_not_found');
+    const retry = Bun.spawnSync([
+      'bun', joinHelper, '--assignment-file', assignmentFile,
+      '--attendance-timeout-ms', '0', '--attendance-poll-ms', '1',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_ATTENDANCE_MODE: 'absent',
+        FAKE_KEEP_ASSIGNMENT_REVISION: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(retry.exitCode).toBe(4);
+    expect(pendingFiles(archiveDir)).toHaveLength(1);
+    const commands = readFileSync(commandLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.some(args => args.includes('+meeting-message-send'))).toBe(false);
+  });
+
+  test('resolves a stale attendance incident when a later server check verifies the bot', () => {
+    const assignmentFile = join(fixtureRoot, 'join-assignment-recovered.json');
+    const archiveDir = join(fixtureRoot, 'join-archive-recovered');
+    const commandLog = join(fixtureRoot, 'join-commands-recovered.ndjson');
+    writeFileSync(assignmentFile, JSON.stringify({
+      assignmentId: 'assignment-join-recovered',
+      revision: 1,
+      meeting: 'https://example.invalid/meeting/123456789',
+      assigner: 'ou_assigner123',
+      attendeeBotOpenId: 'ou_currentbot123',
+      archiveDir,
+      mode: 'proxy',
+    }) + '\n');
+    writeFileSync(commandLog, '');
+
+    const first = Bun.spawnSync([
+      'bun', joinHelper, '--assignment-file', assignmentFile,
+      '--attendance-timeout-ms', '0', '--attendance-poll-ms', '1',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_ATTENDANCE_MODE: 'absent',
+        FAKE_KEEP_ASSIGNMENT_REVISION: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(first.exitCode).toBe(4);
+    expect(pendingFiles(archiveDir)).toHaveLength(1);
+
+    const recovered = Bun.spawnSync([
+      'bun', joinHelper, '--assignment-file', assignmentFile,
+      '--attendance-timeout-ms', '0', '--attendance-poll-ms', '1',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_ATTENDANCE_MODE: 'present',
+        FAKE_KEEP_ASSIGNMENT_REVISION: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(recovered.exitCode).toBe(0);
+    expect(pendingFiles(archiveDir)).toHaveLength(0);
+    const resolvedFile = readdirSync(archiveDir).find(name => name.startsWith('notification.resolved.'));
+    expect(resolvedFile).toBeDefined();
+    const resolved = JSON.parse(readFileSync(join(archiveDir, resolvedFile!), 'utf8'));
+    expect(resolved).toMatchObject({
+      status: 'resolved',
+      reason: 'server_attendance_not_found',
+      resolution: 'attendance_verified',
+    });
+  });
+
+  test('classifies a read failure as internal verification trouble instead of absence', () => {
+    const assignmentFile = join(fixtureRoot, 'join-assignment-query-failed.json');
+    const archiveDir = join(fixtureRoot, 'join-archive-query-failed');
+    const commandLog = join(fixtureRoot, 'join-commands-query-failed.ndjson');
+    writeFileSync(assignmentFile, JSON.stringify({
+      assignmentId: 'assignment-join-query-failed',
+      revision: 1,
+      meeting: 'https://example.invalid/meeting/123456789',
+      assigner: 'ou_assigner123',
+      attendeeBotOpenId: 'ou_currentbot123',
+      archiveDir,
+      mode: 'proxy',
+    }) + '\n');
+    writeFileSync(commandLog, '');
+
+    const result = Bun.spawnSync([
+      'bun', joinHelper, '--assignment-file', assignmentFile,
+      '--attendance-timeout-ms', '0', '--attendance-poll-ms', '1',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_ATTENDANCE_MODE: 'query-failed',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(4);
+    const output = JSON.parse(new TextDecoder().decode(result.stderr));
+    expect(output.attendanceClassification).toBe('query_failed');
+    const pending = JSON.parse(readFileSync(join(archiveDir, pendingFiles(archiveDir)[0]), 'utf8'));
+    expect(pending.reason).toBe('attendance_verification_query_failed');
   });
 });
