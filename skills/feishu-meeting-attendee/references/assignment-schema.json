@@ -13,6 +13,8 @@
     "allowedRecipients",
     "deliveryDestination",
     "executionIsolation",
+    "monitoringTaskName",
+    "supervisorTaskId",
     "archiveDir",
     "statusPath"
   ],
@@ -130,6 +132,11 @@
       "type": "string",
       "pattern": "^[a-f0-9]{8}$",
       "description": "Botmux one-time task ID after scheduling."
+    },
+    "monitoringTaskName": {
+      "type": "string",
+      "pattern": "^feishu-meeting-monitor-[A-Za-z0-9_-]{8,128}$",
+      "description": "Deterministic unique name derived as feishu-meeting-monitor-<assignmentId>; the supervisor reconciles this name before creating a recovery task."
     },
     "supervisorTaskId": {
       "type": "string",

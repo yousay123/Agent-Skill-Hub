@@ -278,10 +278,13 @@ function persistPendingNotification(
     .digest('hex');
   const notificationPendingPath = join(archiveDir, `notification.pending.${dedupKey}.json`);
   const createdAt = new Date().toISOString();
+  const safeReason = status === 'invalid_meeting'
+    ? 'The provider rejected the meeting identifier or meeting access. Inspect the private archive diagnostics.'
+    : 'Meeting monitoring requires host intervention. Inspect the private archive diagnostics.';
   const payload = JSON.stringify({
     schemaVersion: 1,
     status,
-    reason: reason.slice(0, 2_000),
+    reason: safeReason,
     assignerRef: assignerRef ?? null,
     recommendedAction,
     createdAt,
@@ -332,6 +335,9 @@ function ensurePendingNotification(
   if (primary.persisted) return primary;
 
   const incidentId = `${pollerStartedAt}:${cursor.committedBatch}`;
+  const safeReason = status === 'invalid_meeting'
+    ? 'The provider rejected the meeting identifier or meeting access. Inspect the private archive diagnostics.'
+    : 'Meeting monitoring requires host intervention. Inspect the private archive diagnostics.';
   const fallbackPath = join(archiveDir, `notification.pending.fallback-${primary.dedupKey}.json`);
   try {
     if (existsSync(fallbackPath)) {
@@ -344,7 +350,7 @@ function ensurePendingNotification(
     atomicWrite(fallbackPath, JSON.stringify({
       schemaVersion: 1,
       status,
-      reason: reason.slice(0, 2_000),
+      reason: safeReason,
       assignerRef: assignerRef ?? null,
       recommendedAction,
       createdAt: new Date().toISOString(),

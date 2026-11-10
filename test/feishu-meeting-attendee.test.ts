@@ -7,9 +7,12 @@ import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dir, '..');
 const poller = join(root, 'skills', 'feishu-meeting-attendee', 'scripts', 'poll-and-archive.ts');
 const joinHelper = join(root, 'skills', 'feishu-meeting-attendee', 'scripts', 'join-and-greet.ts');
+const supervisor = join(root, 'skills', 'feishu-meeting-attendee', 'scripts', 'supervisor-tick.ts');
+const assignmentSchema = join(root, 'skills', 'feishu-meeting-attendee', 'references', 'assignment-schema.json');
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'meeting-attendee-test-'));
 const fakeCli = join(fixtureRoot, 'fake-lark-cli.ts');
 const fakeJoinCli = join(fixtureRoot, 'lark-cli');
+const fakeBotmux = join(fixtureRoot, 'botmux');
 const assignmentId = 'assignment-test-1';
 const meetingKey = createHash('sha256').update('meeting-test-id').digest('hex').slice(0, 20);
 
@@ -62,6 +65,8 @@ if (args.includes('+meeting-join')) {
     assignment.revision += 1;
     assignment.mode = 'silent';
   }
+  if (process.env.FAKE_MUTATE_SUPERVISOR === '1') assignment.supervisorTaskId = 'deadbeef';
+  if (process.env.FAKE_MUTATE_MONITOR_NAME === '1') assignment.monitoringTaskName = 'feishu-meeting-monitor-wrong';
   writeFileSync(path, JSON.stringify(assignment) + '\\n');
   console.log(JSON.stringify({ ok: true, data: { meeting: { id: 'meeting-joined-id' } } }));
   process.exit(0);
@@ -99,6 +104,42 @@ console.error('unexpected fake join command');
 process.exit(2);
 `, { mode: 0o700 });
   chmodSync(fakeJoinCli, 0o700);
+  writeFileSync(fakeBotmux, `#!/usr/bin/env bun
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const log = process.env.FAKE_BOTMUX_LOG!;
+appendFileSync(log, JSON.stringify(args) + '\\n');
+const delay = Number(process.env.FAKE_BOTMUX_DELAY_MS ?? '0');
+if (delay > 0) await Bun.sleep(delay);
+const statePath = process.env.FAKE_BOTMUX_STATE!;
+const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { tasks: {} };
+if (args[0] === 'schedule' && args[1] === 'add') {
+  const id = args[args.indexOf('--id') + 1];
+  if (state.tasks[id]) process.exit(1);
+  state.tasks[id] = { name: args[args.indexOf('--name') + 1] };
+  writeFileSync(statePath, JSON.stringify(state));
+  console.log('created');
+  process.exit(0);
+}
+if (args[0] === 'schedule' && args[1] === 'run') {
+  const failOnce = process.env.FAKE_BOTMUX_RUN_FAIL_ONCE_FILE;
+  if (failOnce && !existsSync(failOnce)) {
+    writeFileSync(failOnce, 'failed');
+    console.error('synthetic run interruption');
+    process.exit(1);
+  }
+  if (!state.tasks[args[2]]) process.exit(1);
+  console.log('run requested');
+  process.exit(0);
+}
+if (args[0] === 'send') {
+  console.log(JSON.stringify({ success: true, messageId: 'om_supervisor_status' }));
+  process.exit(0);
+}
+console.error('unexpected fake botmux command');
+process.exit(2);
+`, { mode: 0o700 });
+  chmodSync(fakeBotmux, 0o700);
 });
 
 afterAll(() => rmSync(fixtureRoot, { recursive: true, force: true }));
@@ -144,6 +185,87 @@ function seedArchiveManifest(archiveDir: string, selectedAssignmentId = assignme
 
 function pendingFiles(archiveDir: string): string[] {
   return readdirSync(archiveDir).filter(name => name.startsWith('notification.pending.'));
+}
+
+function writeMeetingAssignment(
+  archiveDir: string,
+  overrides: Record<string, unknown> = {},
+): string {
+  mkdirSync(archiveDir, { recursive: true });
+  const assignmentId = String(overrides.assignmentId ?? 'assignment-join-1');
+  const path = join(archiveDir, 'assignment.json');
+  writeFileSync(path, JSON.stringify({
+    assignmentId,
+    revision: 1,
+    meeting: 'https://example.invalid/meeting/123456789',
+    assigner: 'ou_assigner123',
+    attendeeBotOpenId: 'ou_currentbot123',
+    mode: 'proxy',
+    allowedRecipients: ['ou_assigner123'],
+    deliveryDestination: {
+      chatId: 'oc_meetingtest123',
+      rootMessageId: 'om_meetingroot123',
+      recipientOpenId: 'ou_assigner123',
+    },
+    executionIsolation: 'new-topic',
+    monitoringTaskName: `feishu-meeting-monitor-${assignmentId}`,
+    supervisorTaskId: '1234abcd',
+    archiveDir,
+    statusPath: join(archiveDir, 'status.json'),
+    pollIntervalMs: 5_000,
+    ...overrides,
+  }) + '\n');
+  return path;
+}
+
+function supervisorEnv(archiveDir: string, extra: Record<string, string> = {}): Record<string, string> {
+  const log = join(archiveDir, 'botmux-commands.ndjson');
+  const state = join(archiveDir, 'botmux-state.json');
+  if (!existsSync(log)) writeFileSync(log, '');
+  return {
+    ...process.env,
+    PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+    FAKE_BOTMUX_LOG: log,
+    FAKE_BOTMUX_STATE: state,
+    ...extra,
+  } as Record<string, string>;
+}
+
+async function runSupervisor(
+  assignmentFile: string,
+  nowMs: number,
+  env: Record<string, string>,
+  extraArgs: string[] = [],
+): Promise<PollerResult> {
+  const child = Bun.spawn([
+    'bun', supervisor,
+    '--assignment-file', assignmentFile,
+    '--now-ms', String(nowMs),
+    '--lease-ms', '1000',
+    ...extraArgs,
+  ], { cwd: root, env, stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  const line = stdout.trim().split('\n').filter(Boolean).at(-1);
+  const status = line ? JSON.parse(line).status : 'missing';
+  return { exitCode, status, stdout, stderr };
+}
+
+function writeAdmission(archiveDir: string, assignmentId: string, revision: number, nowMs: number): void {
+  writeFileSync(join(archiveDir, 'admission.json'), JSON.stringify({
+    schemaVersion: 1,
+    assignmentId,
+    assignmentRevision: revision,
+    meetingId: 'meeting-joined-id',
+    meetingNo: '123456789',
+    botOpenId: 'ou_currentbot123',
+    mode: 'proxy',
+    greetingOutcome: 'sent',
+    serverParticipantVerifiedAt: new Date(nowMs).toISOString(),
+  }) + '\n');
 }
 
 describe('poll-and-archive durable behavior', () => {
@@ -323,19 +445,20 @@ describe('poll-and-archive durable behavior', () => {
 });
 
 describe('join-and-greet assignment revisions', () => {
+  test('assignment schema requires trusted bot, supervisor, and deterministic monitor identity', () => {
+    const schema = JSON.parse(readFileSync(assignmentSchema, 'utf8'));
+    expect(schema.required).toEqual(expect.arrayContaining([
+      'attendeeBotOpenId',
+      'supervisorTaskId',
+      'monitoringTaskName',
+    ]));
+    expect(schema.properties.monitoringTaskName.pattern).toBe('^feishu-meeting-monitor-[A-Za-z0-9_-]{8,128}$');
+  });
+
   test('re-reads a near-start mode change before sending the greeting', () => {
-    const assignmentFile = join(fixtureRoot, 'join-assignment.json');
     const archiveDir = join(fixtureRoot, 'join-archive');
+    const assignmentFile = writeMeetingAssignment(archiveDir);
     const commandLog = join(fixtureRoot, 'join-commands.ndjson');
-    writeFileSync(assignmentFile, JSON.stringify({
-      assignmentId: 'assignment-join-1',
-      revision: 1,
-      meeting: 'https://example.invalid/meeting/123456789',
-      assigner: 'ou_assigner123',
-      attendeeBotOpenId: 'ou_currentbot123',
-      archiveDir,
-      mode: 'proxy',
-    }) + '\n');
     writeFileSync(commandLog, '');
 
     const result = Bun.spawnSync([
@@ -357,6 +480,7 @@ describe('join-and-greet assignment revisions', () => {
     expect(output.assignmentRevision).toBe(2);
     expect(output.greeted).toBe(false);
     expect(output.attendanceVerified).toBe(true);
+    expect(output.admissionWritten).toBe(true);
     const proof = JSON.parse(readFileSync(join(archiveDir, 'attendance-proof.json'), 'utf8'));
     expect(proof).toMatchObject({
       assignmentId: 'assignment-join-1',
@@ -367,6 +491,12 @@ describe('join-and-greet assignment revisions', () => {
       status: 'joined',
     });
     expect(proof.firstJoinTime).toBe('2026-11-05T02:17:17.000Z');
+    expect(JSON.parse(readFileSync(join(archiveDir, 'admission.json'), 'utf8'))).toMatchObject({
+      assignmentId: 'assignment-join-1',
+      assignmentRevision: 2,
+      botOpenId: 'ou_currentbot123',
+      greetingOutcome: 'silent_not_required',
+    });
     const commands = readFileSync(commandLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     expect(commands.some(args => args.includes('+meeting-join'))).toBe(true);
     expect(commands.some(args => args.includes('--with-participants'))).toBe(true);
@@ -374,18 +504,9 @@ describe('join-and-greet assignment revisions', () => {
   });
 
   test('persists one deduplicated host-action incident only after the server omits the trusted bot', () => {
-    const assignmentFile = join(fixtureRoot, 'join-assignment-absent.json');
     const archiveDir = join(fixtureRoot, 'join-archive-absent');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-join-absent' });
     const commandLog = join(fixtureRoot, 'join-commands-absent.ndjson');
-    writeFileSync(assignmentFile, JSON.stringify({
-      assignmentId: 'assignment-join-absent',
-      revision: 1,
-      meeting: 'https://example.invalid/meeting/123456789',
-      assigner: 'ou_assigner123',
-      attendeeBotOpenId: 'ou_currentbot123',
-      archiveDir,
-      mode: 'proxy',
-    }) + '\n');
     writeFileSync(commandLog, '');
 
     const result = Bun.spawnSync([
@@ -440,18 +561,9 @@ describe('join-and-greet assignment revisions', () => {
   });
 
   test('resolves a stale attendance incident when a later server check verifies the bot', () => {
-    const assignmentFile = join(fixtureRoot, 'join-assignment-recovered.json');
     const archiveDir = join(fixtureRoot, 'join-archive-recovered');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-join-recovered' });
     const commandLog = join(fixtureRoot, 'join-commands-recovered.ndjson');
-    writeFileSync(assignmentFile, JSON.stringify({
-      assignmentId: 'assignment-join-recovered',
-      revision: 1,
-      meeting: 'https://example.invalid/meeting/123456789',
-      assigner: 'ou_assigner123',
-      attendeeBotOpenId: 'ou_currentbot123',
-      archiveDir,
-      mode: 'proxy',
-    }) + '\n');
     writeFileSync(commandLog, '');
 
     const first = Bun.spawnSync([
@@ -502,18 +614,9 @@ describe('join-and-greet assignment revisions', () => {
   });
 
   test('classifies a read failure as internal verification trouble instead of absence', () => {
-    const assignmentFile = join(fixtureRoot, 'join-assignment-query-failed.json');
     const archiveDir = join(fixtureRoot, 'join-archive-query-failed');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-join-query-failed' });
     const commandLog = join(fixtureRoot, 'join-commands-query-failed.ndjson');
-    writeFileSync(assignmentFile, JSON.stringify({
-      assignmentId: 'assignment-join-query-failed',
-      revision: 1,
-      meeting: 'https://example.invalid/meeting/123456789',
-      assigner: 'ou_assigner123',
-      attendeeBotOpenId: 'ou_currentbot123',
-      archiveDir,
-      mode: 'proxy',
-    }) + '\n');
     writeFileSync(commandLog, '');
 
     const result = Bun.spawnSync([
@@ -536,5 +639,194 @@ describe('join-and-greet assignment revisions', () => {
     expect(output.attendanceClassification).toBe('query_failed');
     const pending = JSON.parse(readFileSync(join(archiveDir, pendingFiles(archiveDir)[0]), 'utf8'));
     expect(pending.reason).toBe('attendance_verification_query_failed');
+  });
+
+  test('refuses admission when the durable supervisor identity changes after join', () => {
+    const archiveDir = join(fixtureRoot, 'join-archive-supervisor-changed');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-join-guarded' });
+    const commandLog = join(fixtureRoot, 'join-commands-supervisor-changed.ndjson');
+    writeFileSync(commandLog, '');
+    const result = Bun.spawnSync(['bun', joinHelper, '--assignment-file', assignmentFile], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+        FAKE_KEEP_ASSIGNMENT_REVISION: '1',
+        FAKE_MUTATE_SUPERVISOR: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(3);
+    expect(new TextDecoder().decode(result.stderr)).toContain('supervisorTaskId changed or disappeared');
+    expect(existsSync(join(archiveDir, 'admission.json'))).toBe(false);
+    const commands = readFileSync(commandLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.some(args => args.includes('+meeting-message-send'))).toBe(false);
+  });
+
+  test('rejects a non-deterministic monitoring task name before joining', () => {
+    const archiveDir = join(fixtureRoot, 'join-archive-bad-monitor-name');
+    const assignmentFile = writeMeetingAssignment(archiveDir, {
+      assignmentId: 'assignment-join-nameguard',
+      monitoringTaskName: 'feishu-meeting-monitor-wrong',
+    });
+    const commandLog = join(fixtureRoot, 'join-commands-bad-monitor-name.ndjson');
+    writeFileSync(commandLog, '');
+    const result = Bun.spawnSync(['bun', joinHelper, '--assignment-file', assignmentFile], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toContain('non-deterministic monitoringTaskName');
+    expect(readFileSync(commandLog, 'utf8')).toBe('');
+  });
+
+  test('refuses to join before a durable supervisor task exists', () => {
+    const archiveDir = join(fixtureRoot, 'join-archive-no-supervisor');
+    const assignmentFile = writeMeetingAssignment(archiveDir, {
+      assignmentId: 'assignment-join-nosupervisor',
+      supervisorTaskId: '',
+    });
+    const commandLog = join(fixtureRoot, 'join-commands-no-supervisor.ndjson');
+    writeFileSync(commandLog, '');
+    const result = Bun.spawnSync(['bun', joinHelper, '--assignment-file', assignmentFile], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${fixtureRoot}:${process.env.PATH ?? ''}`,
+        FAKE_ASSIGNMENT_FILE: assignmentFile,
+        FAKE_JOIN_LOG: commandLog,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toContain('invalid supervisorTaskId');
+    expect(readFileSync(commandLog, 'utf8')).toBe('');
+  });
+});
+
+describe('supervisor monitoring recovery', () => {
+  test('recovers a missing monitoring dispatch 30 seconds after verified admission', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-recover-dispatch');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-recover' });
+    const admittedAt = 2_000_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-recover', 1, admittedAt);
+    const env = supervisorEnv(archiveDir);
+    const result = await runSupervisor(assignmentFile, admittedAt + 30_000, env);
+    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe('monitoring_dispatch_recovered');
+    const assignment = JSON.parse(readFileSync(assignmentFile, 'utf8'));
+    expect(assignment.scheduleTaskId).toMatch(/^[a-f0-9]{8}$/);
+    const dispatch = JSON.parse(readFileSync(join(archiveDir, 'monitoring.dispatch.json'), 'utf8'));
+    expect(dispatch).toMatchObject({ phase: 'run_requested', taskId: assignment.scheduleTaskId });
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'add')).toHaveLength(1);
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(1);
+  });
+
+  test('repairs an interrupted add-before-run sequence on the next tick', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-interrupted-dispatch');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-interrupt' });
+    const admittedAt = 3_000_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-interrupt', 1, admittedAt);
+    const failOnce = join(archiveDir, 'run-failed-once');
+    const env = supervisorEnv(archiveDir, { FAKE_BOTMUX_RUN_FAIL_ONCE_FILE: failOnce });
+    const first = await runSupervisor(assignmentFile, admittedAt + 30_000, env);
+    expect(first.exitCode).not.toBe(0);
+    expect(JSON.parse(readFileSync(join(archiveDir, 'monitoring.dispatch.json'), 'utf8')).phase).toBe('created');
+    const second = await runSupervisor(assignmentFile, admittedAt + 61_000, env);
+    expect(second.exitCode).toBe(0);
+    expect(second.status).toBe('monitoring_dispatch_recovered');
+    expect(JSON.parse(readFileSync(join(archiveDir, 'monitoring.dispatch.json'), 'utf8')).phase).toBe('run_requested');
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'add')).toHaveLength(2);
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(2);
+  });
+
+  test('reconciles a task created before assignment persistence', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-created-before-persist');
+    const selectedAssignmentId = 'assignment-supervisor-halfpersist';
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: selectedAssignmentId });
+    const admittedAt = 3_500_000;
+    writeAdmission(archiveDir, selectedAssignmentId, 1, admittedAt);
+    const env = supervisorEnv(archiveDir);
+    const taskId = createHash('sha256')
+      .update(`feishu-meeting-attendee:monitor:v1:${selectedAssignmentId}`)
+      .digest('hex')
+      .slice(0, 8);
+    writeFileSync(env.FAKE_BOTMUX_STATE, JSON.stringify({
+      tasks: { [taskId]: { name: `feishu-meeting-monitor-${selectedAssignmentId}` } },
+    }));
+    const result = await runSupervisor(assignmentFile, admittedAt + 30_000, env);
+    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe('monitoring_dispatch_recovered');
+    expect(JSON.parse(readFileSync(assignmentFile, 'utf8')).scheduleTaskId).toBe(taskId);
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'add')).toHaveLength(1);
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(1);
+  });
+
+  test('overlapping ticks acquire one lease and create one monitoring task', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-overlap');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-overlap' });
+    const admittedAt = 4_000_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-overlap', 1, admittedAt);
+    const env = supervisorEnv(archiveDir, { FAKE_BOTMUX_DELAY_MS: '150' });
+    const results = await Promise.all(Array.from({ length: 4 }, () => (
+      runSupervisor(assignmentFile, admittedAt + 30_000, env)
+    )));
+    expect(results.filter(result => result.status === 'monitoring_dispatch_recovered')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'already_running')).toHaveLength(3);
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'add')).toHaveLength(1);
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(1);
+  });
+
+  test('takes over an expired half-written lease without duplicating dispatch', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-half-written-lease');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-halflease' });
+    const admittedAt = 5_000_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-halflease', 1, admittedAt);
+    const leaseDir = join(archiveDir, '.supervisor.tick.lease');
+    mkdirSync(leaseDir);
+    writeFileSync(join(leaseDir, 'owner.json'), '{"acquiredAtMs":');
+    const env = supervisorEnv(archiveDir);
+    const result = await runSupervisor(assignmentFile, Date.now() + 2_000, env);
+    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe('monitoring_dispatch_recovered');
+    expect(existsSync(leaseDir)).toBe(false);
+    expect(readdirSync(archiveDir).some(name => name.startsWith('.supervisor.tick.lease.stale-'))).toBe(false);
+  });
+
+  test('sends one monitoring status only after lock and heartbeat proof exist', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-monitoring-receipt');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-status' });
+    const nowMs = 6_000_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-status', 1, nowMs - 60_000);
+    writeFileSync(join(archiveDir, '.poll.lock'), JSON.stringify({ pid: process.pid, ownerToken: 'test' }));
+    writeFileSync(join(archiveDir, 'status.json'), JSON.stringify({
+      schemaVersion: 1,
+      assignmentId: 'assignment-supervisor-status',
+      phase: 'monitoring',
+      updatedAt: new Date(nowMs).toISOString(),
+    }));
+    const env = supervisorEnv(archiveDir);
+    const first = await runSupervisor(assignmentFile, nowMs, env);
+    const second = await runSupervisor(assignmentFile, nowMs + 1_000, env);
+    expect([first.status, second.status]).toEqual(['monitoring', 'monitoring']);
+    const receipt = join(archiveDir, 'monitoring.delivery.receipt.assignment-supervisor-status.ou_assigner123.json');
+    expect(JSON.parse(readFileSync(receipt, 'utf8')).messageId).toBe('om_supervisor_status');
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'send')).toHaveLength(1);
   });
 });
