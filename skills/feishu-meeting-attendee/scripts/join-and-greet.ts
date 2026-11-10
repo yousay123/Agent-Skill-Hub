@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const DEFAULT_GREETING = '大家好，我是受委托参会的智能体助手，仅做记录与总结，不代表委托人作出承诺；会后我会把会议内容和 TODO 同步给委托人。';
 type MeetingMode = 'silent' | 'proxy' | 'assistant';
@@ -37,6 +37,9 @@ interface AssignmentSnapshot {
   assigner: string;
   attendeeBotOpenId: string;
   archiveDir: string;
+  statusPath: string;
+  supervisorTaskId: string;
+  monitoringTaskName: string;
 }
 
 function readAssignmentSnapshot(path: string): AssignmentSnapshot {
@@ -51,6 +54,17 @@ function readAssignmentSnapshot(path: string): AssignmentSnapshot {
   const assigner = typeof body.assigner === 'string' ? body.assigner.trim() : '';
   const attendeeBotOpenId = typeof body.attendeeBotOpenId === 'string' ? body.attendeeBotOpenId.trim() : '';
   const archiveDir = typeof body.archiveDir === 'string' ? resolve(body.archiveDir) : '';
+  const statusPath = typeof body.statusPath === 'string' ? resolve(body.statusPath) : '';
+  const supervisorTaskId = typeof body.supervisorTaskId === 'string' ? body.supervisorTaskId.trim() : '';
+  const monitoringTaskName = typeof body.monitoringTaskName === 'string' ? body.monitoringTaskName.trim() : '';
+  const allowedRecipients = Array.isArray(body.allowedRecipients)
+    ? body.allowedRecipients.filter((value): value is string => typeof value === 'string')
+    : [];
+  const destination = body.deliveryDestination && typeof body.deliveryDestination === 'object' && !Array.isArray(body.deliveryDestination)
+    ? body.deliveryDestination as Record<string, unknown>
+    : undefined;
+  const recipientOpenId = typeof destination?.recipientOpenId === 'string' ? destination.recipientOpenId.trim() : '';
+  const chatId = typeof destination?.chatId === 'string' ? destination.chatId.trim() : '';
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(assignmentId)) {
     throw new Error(`assignment file has an invalid assignmentId: ${path}`);
   }
@@ -64,7 +78,24 @@ function readAssignmentSnapshot(path: string): AssignmentSnapshot {
   if (!/^ou_[A-Za-z0-9]+$/.test(attendeeBotOpenId)) {
     throw new Error(`assignment file has an invalid attendeeBotOpenId: ${path}`);
   }
-  if (!archiveDir) throw new Error(`assignment file has no archiveDir: ${path}`);
+  if (!allowedRecipients.includes(assigner)) throw new Error(`assignment file allowedRecipients does not include assigner: ${path}`);
+  if (!/^ou_[A-Za-z0-9]+$/.test(recipientOpenId) || !allowedRecipients.includes(recipientOpenId)) {
+    throw new Error(`assignment file has an unapproved delivery recipient: ${path}`);
+  }
+  if (!/^oc_[A-Za-z0-9]+$/.test(chatId)) throw new Error(`assignment file has an invalid delivery chatId: ${path}`);
+  if (body.executionIsolation !== 'new-topic') throw new Error(`assignment file must use executionIsolation=new-topic: ${path}`);
+  if (!archiveDir || archiveDir !== dirname(resolve(path))) {
+    throw new Error(`assignment file archiveDir must be its containing directory: ${path}`);
+  }
+  if (!statusPath || dirname(statusPath) !== archiveDir || basename(statusPath) !== 'status.json') {
+    throw new Error(`assignment file statusPath must be archiveDir/status.json: ${path}`);
+  }
+  if (!/^[a-f0-9]{8}$/.test(supervisorTaskId)) {
+    throw new Error(`assignment file has an invalid supervisorTaskId: ${path}`);
+  }
+  if (monitoringTaskName !== `feishu-meeting-monitor-${assignmentId}`) {
+    throw new Error(`assignment file has a non-deterministic monitoringTaskName: ${path}`);
+  }
   return {
     assignmentId,
     revision,
@@ -73,6 +104,9 @@ function readAssignmentSnapshot(path: string): AssignmentSnapshot {
     assigner,
     attendeeBotOpenId,
     archiveDir,
+    statusPath,
+    supervisorTaskId,
+    monitoringTaskName,
   };
 }
 
@@ -112,6 +146,7 @@ interface AttendanceResult {
   proofPath?: string;
   checkPath: string;
   firstJoinTime?: string;
+  verifiedAt?: string;
   lastError?: string;
   notificationPath?: string;
 }
@@ -280,7 +315,7 @@ async function verifyAndPersistAttendance(
           checkedAt: verifiedAt,
         }, null, 2)}\n`);
         resolvePendingAttendanceIncidents(latest, verifiedAt);
-        return { verified: true, classification: 'verified', proofPath, checkPath, ...(firstJoinTime ? { firstJoinTime } : {}) };
+        return { verified: true, classification: 'verified', proofPath, checkPath, verifiedAt, ...(firstJoinTime ? { firstJoinTime } : {}) };
       }
       lastError = undefined;
     } catch (error) {
@@ -449,6 +484,16 @@ if (assignmentFile && initialAssignment) {
     if (meetingNumberFrom(latest.meeting) !== meetingNo) {
       throw new Error('meeting reference changed after the meeting join');
     }
+    if (latest.attendeeBotOpenId !== initialAssignment.attendeeBotOpenId
+      || latest.archiveDir !== initialAssignment.archiveDir) {
+      throw new Error('assignment identity changed after the meeting join');
+    }
+    if (latest.supervisorTaskId !== initialAssignment.supervisorTaskId) {
+      throw new Error('supervisorTaskId changed or disappeared after the meeting join');
+    }
+    if (latest.monitoringTaskName !== initialAssignment.monitoringTaskName) {
+      throw new Error('monitoringTaskName changed or disappeared after the meeting join');
+    }
     appliedAssignment = latest;
     mode = latest.mode;
   } catch (error) {
@@ -497,7 +542,26 @@ if (!attendance.verified) {
   process.exit(4);
 }
 
+function persistAdmission(greetingOutcome: 'silent_not_required' | 'sent' | 'uncertain_do_not_retry'): string {
+  const path = join(appliedAssignment.archiveDir, 'admission.json');
+  atomicWrite(path, `${JSON.stringify({
+    schemaVersion: 1,
+    assignmentId: appliedAssignment.assignmentId,
+    assignmentRevision: appliedAssignment.revision,
+    meetingId,
+    meetingNo,
+    botOpenId: appliedAssignment.attendeeBotOpenId,
+    mode,
+    greetingOutcome,
+    serverParticipantVerifiedAt: attendance.verifiedAt,
+    ...(attendance.firstJoinTime ? { firstJoinTime: attendance.firstJoinTime } : {}),
+    attendanceProofPath: attendance.proofPath,
+  }, null, 2)}\n`);
+  return path;
+}
+
 if (mode === 'silent') {
+  const admissionPath = persistAdmission('silent_not_required');
   process.stdout.write(`${JSON.stringify({
     ok: true,
     joined: true,
@@ -507,6 +571,9 @@ if (mode === 'silent') {
     meetingNo,
     attendanceVerified: true,
     attendanceProofPath: attendance.proofPath,
+    serverParticipantVerified: true,
+    admissionWritten: true,
+    admissionPath,
     ...(attendance.firstJoinTime ? { firstJoinTime: attendance.firstJoinTime } : {}),
     ...(appliedAssignment ? {
       assignmentId: appliedAssignment.assignmentId,
@@ -525,6 +592,7 @@ try {
   ]);
   assertLarkOk(greetingRaw, 'meeting greeting');
 } catch (error) {
+  const admissionPath = persistAdmission('uncertain_do_not_retry');
   process.stderr.write(`${JSON.stringify({
     ok: false,
     joined: true,
@@ -532,6 +600,10 @@ try {
     mode,
     meetingId,
     meetingNo,
+    attendanceVerified: true,
+    serverParticipantVerified: true,
+    admissionWritten: true,
+    admissionPath,
     ...(appliedAssignment ? {
       assignmentId: appliedAssignment.assignmentId,
       assignmentRevision: appliedAssignment.revision,
@@ -540,6 +612,8 @@ try {
   }, null, 2)}\n`);
   process.exit(3);
 }
+
+const admissionPath = persistAdmission('sent');
 
 process.stdout.write(`${JSON.stringify({
   ok: true,
@@ -550,6 +624,9 @@ process.stdout.write(`${JSON.stringify({
   meetingNo,
   attendanceVerified: true,
   attendanceProofPath: attendance.proofPath,
+  serverParticipantVerified: true,
+  admissionWritten: true,
+  admissionPath,
   ...(attendance.firstJoinTime ? { firstJoinTime: attendance.firstJoinTime } : {}),
   greetingUuid,
   greeting,

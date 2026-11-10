@@ -53,7 +53,7 @@ catalog.json     SKILL.md            scripts / references
 CODEX_ROOT="${CODEX_HOME:-$HOME/.codex}"
 python3 "$CODEX_ROOT/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo yousay123/Agent-Skill-Hub \
-  --ref feishu-meeting-attendee-v1.2.1 \
+  --ref feishu-meeting-attendee-v1.3.0 \
   --path skills/feishu-meeting-attendee
 ```
 
@@ -63,7 +63,7 @@ Windows PowerShell 可执行：
 $CodexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 py "$CodexRoot\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
   --repo yousay123/Agent-Skill-Hub `
-  --ref feishu-meeting-attendee-v1.2.1 `
+  --ref feishu-meeting-attendee-v1.3.0 `
   --path skills/feishu-meeting-attendee
 ```
 
