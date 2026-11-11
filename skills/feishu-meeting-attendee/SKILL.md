@@ -2,7 +2,7 @@
 name: feishu-meeting-attendee
 description: Attend a Feishu/Lark meeting for a verified assigner from a meeting number or link, optionally pre-read supplied context, operate in silent/proxy/assistant mode, privately escalate blocking decisions when explicitly enabled, track decisions and TODOs, and return Chinese minutes plus task drafts. Use when a verified user asks the assistant to attend on their behalf. Do not use for calendar acceptance or voice hosting.
 metadata:
-  version: 1.3.0
+  version: 1.3.1
 ---
 
 # Feishu Meeting Attendee
@@ -23,13 +23,13 @@ The request may come from a direct message, group chat, or topic. Treat the invo
 
 Create a structured assignment before dispatch. It must include a stable `assignmentId`, monotonic `revision`, scheduled start/end when known, explicit delivery destination, `executionIsolation: "new-topic"`, deterministic `monitoringTaskName`, durable `supervisorTaskId`, a unique host-private `archiveDir`, its `statusPath`, and the current bot's trusted app-scoped `attendeeBotOpenId` from host identity metadata. Never infer that open ID from meeting participants. Store `assignment.json` beside the meeting archive and validate it against [references/assignment-schema.json](references/assignment-schema.json). A mode or focus change rewrites the assignment atomically and increments `revision`. Updating a schedule prompt alone does not change an already-started run. The join helper reads the assignment before the join and again before any greeting, so a near-start mode change is applied when still possible. If the greeting was already sent, report that a later mode change cannot retract it.
 
-Never sleep, poll, or wait for a meeting in the invoking conversational session. Every meeting gets its own independent scheduled monitoring session. For an already-active meeting, create the independent supervisor first, persist its task ID, then use the bounded fast-admission path: join, verify the server participant snapshot, persist `admission.json`, report “已入会，正在启动监控”, and dispatch the durable monitoring runner. The invoking turn may perform only that bounded join/verification/greeting operation; it must not run the poller or remain alive for monitoring. Future meetings stay entirely in the scheduled runner.
+Never sleep, poll, or wait for a meeting in the invoking conversational session. Every meeting gets its own independent scheduled monitoring session. For an already-active, normal-sensitivity meeting, use the bundled `start-active-meeting.ts` entrypoint below instead of manually issuing the preparation, scheduling, join, and monitoring commands one by one. It atomically persists the assignment, creates the independent supervisor before any join, performs bounded verified admission, and immediately dispatches the durable monitor. It returns the admission-only update as structured output; the invoking turn sends that update through its current verified conversation route rather than letting the helper perform a second independently routed external write. The invoking turn must not run the poller or remain alive for monitoring. Future meetings stay entirely in the scheduled runner.
 
-Use a one-time `botmux schedule` task with `--silent --new-topic` for monitoring. For an active meeting, create it for the nearest supported time and run it immediately after fast admission. Persist its task ID, then return control to the invoking conversation. Do not use `--topic`, `--top-level`, foreground `wait`, or repeated terminal polling in the invoking session. Overlapping meetings must use different assignment IDs, archive directories, schedules, and sessions.
+Use a one-time `botmux schedule` task with `--silent --new-topic` for monitoring. The active-meeting starter creates it for the nearest supported time and runs it immediately after verified admission. It persists the task ID before returning control to the invoking conversation. Do not use `--topic`, `--top-level`, foreground `wait`, or repeated terminal polling in the invoking session. Overlapping meetings must use different assignment IDs, archive directories, schedules, and sessions.
 
 The isolated task prompt must contain the complete trusted assignment, require this skill, and name the exact original delivery destination. It must not depend on chat memory. A dispatch or `model_dispatched` ledger entry means only `dispatched`, never `joined` or successful attendance.
 
-Create a companion silent independent supervisor schedule before fast admission. Its prompt runs the bundled one-tick supervisor every time it fires:
+The active-meeting starter creates a companion silent independent supervisor schedule before fast admission. Its prompt runs the bundled one-tick supervisor every time it fires:
 
 ```bash
 bun "<skill-root>/scripts/supervisor-tick.ts" \
@@ -60,7 +60,23 @@ In `proxy` and `assistant` modes, the request authorizes one bot join and this f
 
 A custom introduction still requires the verified assigner's explicit text.
 
-For an active meeting, run the bundled helper only after the assignment and independent supervisor are durable:
+For an ordinary active meeting, resolve `<skill-root>` as the directory containing this `SKILL.md` and run the deterministic starter once. All identity and destination arguments must come from trusted Botmux metadata, not meeting content. Use a unique host-private archive directory and stable assignment ID:
+
+```bash
+bun "<skill-root>/scripts/start-active-meeting.ts" \
+  --meeting '<9-digit-number-or-link>' \
+  --assignment-id '<stable-assignment-id>' \
+  --assigner '<verified-sender-open-id>' \
+  --attendee-bot-open-id '<current-bot-open-id>' \
+  --chat-id '<original-chat-id>' \
+  --root-message-id '<original-topic-root-id>' \
+  --archive-dir '<private-archive-dir>' \
+  --mode proxy
+```
+
+Omit `--root-message-id` only when the trusted destination is not a topic. Pass `--scheduled-end` when known so the supervisor deadline is bounded. Use `--intro` only for the assigner's explicit replacement text. The starter refuses to join unless supervisor creation is confirmed. Its immutable start contract freezes the trusted meeting identity and delivery destination before external writes; changing the destination requires a new assignment ID, not an in-place revision. Mode/focus updates keep that contract and must wait for or coordinate with the active-start lease. Its step ledgers make a retry skip already-proven admission. After a successful result, immediately send the returned `admissionUpdate.text` through the invoking turn's current verified route; do not ask the helper to route that status itself. If supervisor creation is ambiguous, stop automatic retries and reconcile that external write. If monitor dispatch fails after admission, the durable supervisor can recover it and rerunning the starter resumes without rejoining.
+
+For restricted meetings, custom recipients, pre-read fields, or a recovery that needs a pre-existing assignment revision, use the explicit assignment workflow instead. Run the bundled join helper only after the assignment and independent supervisor are durable:
 
 Resolve `<skill-root>` as the directory containing this `SKILL.md`, then run:
 

@@ -792,6 +792,23 @@ describe('supervisor monitoring recovery', () => {
     expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(1);
   });
 
+  test('does not steal an expired supervisor lease from a still-running owner', async () => {
+    const archiveDir = join(fixtureRoot, 'supervisor-live-expired-lease');
+    const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-livelease' });
+    const admittedAt = 4_500_000;
+    writeAdmission(archiveDir, 'assignment-supervisor-livelease', 1, admittedAt);
+    const env = supervisorEnv(archiveDir, { FAKE_BOTMUX_DELAY_MS: '1400' });
+    const firstPromise = runSupervisor(assignmentFile, admittedAt + 30_000, env);
+    await Bun.sleep(1_100);
+    const second = await runSupervisor(assignmentFile, admittedAt + 40_000, env);
+    const first = await firstPromise;
+    expect(first.status).toBe('monitoring_dispatch_recovered');
+    expect(second.status).toBe('already_running');
+    const commands = readFileSync(env.FAKE_BOTMUX_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'add')).toHaveLength(1);
+    expect(commands.filter(args => args[0] === 'schedule' && args[1] === 'run')).toHaveLength(1);
+  }, 10_000);
+
   test('takes over an expired half-written lease without duplicating dispatch', async () => {
     const archiveDir = join(fixtureRoot, 'supervisor-half-written-lease');
     const assignmentFile = writeMeetingAssignment(archiveDir, { assignmentId: 'assignment-supervisor-halflease' });

@@ -232,7 +232,8 @@ lark-cli doctor
 用户提供会议 ID/链接、时间与模式
   → 宿主校验输入、权限和已验证的智能体主人身份
   → 到会议时间触发 Skill（或立即执行）
-  → join-and-greet.ts 入会并按模式发送一次介绍
+  → 活跃会议由 start-active-meeting.ts 一次完成监督任务、入会核验和监控派发
+  → 计划会议或显式恢复由 join-and-greet.ts 入会并按模式发送一次介绍
   → poll-and-archive.ts 持续读取并可靠落盘会议事件
   → 宿主整理发言、决策、TODO、风险和采集限制
   → 必要且已启用时，私聊智能体主人做阻塞决策升级
@@ -243,6 +244,7 @@ lark-cli doctor
 Skill 自带的通用 helper：
 
 ```bash
+bun scripts/start-active-meeting.ts --help
 bun scripts/join-and-greet.ts --help
 bun scripts/poll-and-archive.ts --help
 bun scripts/send-message.ts --help
