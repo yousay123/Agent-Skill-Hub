@@ -156,6 +156,18 @@ function leaseTimestamp(path: string): number {
   return statSync(path).mtimeMs;
 }
 
+function leaseOwnerIsLive(path: string): boolean {
+  try {
+    const owner = readJson(join(path, 'owner.json'));
+    const pid = Number(owner.pid);
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function acquireLease(archiveDir: string, nowMs: number, leaseMs: number): Lease | undefined {
   const path = join(archiveDir, '.supervisor.tick.lease');
   const takeover = join(archiveDir, '.supervisor.tick.takeover');
@@ -168,7 +180,7 @@ function acquireLease(archiveDir: string, nowMs: number, leaseMs: number): Lease
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
-  if (nowMs - leaseTimestamp(path) < leaseMs) return undefined;
+  if (leaseOwnerIsLive(path) || nowMs - leaseTimestamp(path) < leaseMs) return undefined;
 
   try {
     mkdirSync(takeover, { mode: 0o700 });
@@ -178,7 +190,7 @@ function acquireLease(archiveDir: string, nowMs: number, leaseMs: number): Lease
   }
   try {
     if (!existsSync(path)) return undefined;
-    if (nowMs - leaseTimestamp(path) < leaseMs) return undefined;
+    if (leaseOwnerIsLive(path) || nowMs - leaseTimestamp(path) < leaseMs) return undefined;
     const stale = `${path}.stale-${nowMs}-${token.slice(0, 8)}`;
     renameSync(path, stale);
     try {
