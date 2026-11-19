@@ -315,7 +315,9 @@ function supervisorPrompt(assignmentFile: string): string {
     'Use the feishu-meeting-attendee skill as the independent technical supervisor for one assignment.',
     `Read the trusted assignment from ${assignmentFile}.`,
     `Run: bun "${join(dirname(import.meta.path), 'supervisor-tick.ts')}" --assignment-file "${assignmentFile}"`,
-    'Deliver durable pending technical notifications and a finalized report only to the persisted destination.',
+    'You are the sole final-report sender for this assignment. Treat the canonical final.json as the only report payload; do not compose or send a summary, role view, technical review, or other report variant separately.',
+    'Before sending, check the durable final-delivery state for assignmentId + recipient. If a confirmed receipt exists or a previous send is unresolved, do not send another final.',
+    'Deliver durable pending technical notifications and, when eligible, the one canonical finalized report only to the persisted destination.',
     'After a confirmed final delivery receipt or confirmed action_required delivery, run botmux schedule done self --note "meeting attendance delivery settled". Otherwise leave the task active and remain silent.',
   ].join('\n');
 }

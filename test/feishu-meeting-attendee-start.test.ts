@@ -189,6 +189,10 @@ describe('active-meeting fast start', () => {
     expect(supervisorAdd).toBeLessThan(joinMeeting);
     expect(joinMeeting).toBeLessThan(monitorAdd);
     expect(monitorAdd).toBeLessThan(monitorRun);
+    expect(recorded[supervisorAdd].args[3]).toContain('sole final-report sender');
+    expect(recorded[supervisorAdd].args[3]).toContain('canonical final.json');
+    expect(recorded[monitorAdd].args[3]).toContain('Do not send meeting minutes or any final report');
+    expect(recorded[monitorAdd].args[3]).toContain('supervisor is the sole final-report sender');
     expect(recorded.some(event => event.kind === 'botmux' && event.args[0] === 'send')).toBe(false);
   });
 

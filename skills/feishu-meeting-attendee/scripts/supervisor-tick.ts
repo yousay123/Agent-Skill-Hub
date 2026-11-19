@@ -314,7 +314,9 @@ function monitoringPrompt(assignment: Assignment, assignmentFile: string): strin
     `Read and validate the assignment from ${assignmentFile}.`,
     'Use a matching admission.json without joining or greeting again; otherwise run the normal verified join path.',
     'Start poll-and-archive with the assignment ID, archive directory, and status path. Keep the turn alive until a terminal provider state or actionable failure.',
-    'Deliver only to the persisted delivery destination and preserve pending notifications until delivery is confirmed.',
+    'Maintain one canonical final.json that merges the brief, full minutes, requested role views, technical review, decisions, risks, and TODOs as sections.',
+    'Do not send meeting minutes or any final report from this monitoring turn. The independent supervisor is the sole final-report sender.',
+    'Preserve pending technical notifications until delivery is confirmed and never treat them as alternate meeting reports.',
     `Trusted assignment snapshot: ${JSON.stringify(assignment)}`,
   ].join('\n');
 }

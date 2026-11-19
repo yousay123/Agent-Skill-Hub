@@ -2,7 +2,7 @@
 name: feishu-meeting-attendee
 description: Attend a Feishu/Lark meeting for a verified assigner from a meeting number or link, optionally pre-read supplied context, operate in silent/proxy/assistant mode, privately escalate blocking decisions when explicitly enabled, track decisions and TODOs, and return Chinese minutes plus task drafts. Use when a verified user asks the assistant to attend on their behalf. Do not use for calendar acceptance or voice hosting.
 metadata:
-  version: 1.3.1
+  version: 1.3.2
 ---
 
 # Feishu Meeting Attendee
@@ -38,7 +38,7 @@ bun "<skill-root>/scripts/supervisor-tick.ts" \
 
 Each tick acquires an atomic expiring lease. A live lease makes overlapping ticks exit successfully without side effects; an expired or half-written lease can be taken over. If verified `admission.json` exists but no healthy monitoring lock/heartbeat appears within 30 seconds, the supervisor derives or reuses the deterministic task ID, creates the uniquely named monitoring schedule when missing, persists `scheduleTaskId`, and requests an immediate run. A crash after task creation but before the run request remains recoverable on the next tick. Once `.poll.lock` and a fresh `status.json` with `phase=monitoring` exist, it sends one “已入会并监控中” update and writes `monitoring.delivery.receipt.<assignmentId>.<recipient>.json` only after a confirmed message ID. The supervisor never holds the meeting poller and never treats schedule dispatch as attendance proof.
 
-The supervisor prompt must also deliver each `notification.pending.*.json` to the persisted original destination and rename that exact file to `notification.sent.<dedupKey>.json` only after confirmed delivery, recover a finalized-but-undelivered report from `final.json`, and stop only after a durable final delivery receipt or confirmed `action_required` notification. Ambiguous sends remain pending with the same incident ID; do not promise exactly-once delivery.
+The supervisor prompt must also deliver each `notification.pending.*.json` to the persisted original destination and rename that exact file to `notification.sent.<dedupKey>.json` only after confirmed delivery, recover a finalized-but-undelivered report from the canonical `final.json`, and stop only after a durable final delivery receipt or confirmed `action_required` notification. It must not compose or send a second report variant. Ambiguous sends remain pending with the same incident ID; do not promise exactly-once delivery or generate a replacement report while the first send is unresolved.
 
 If the user supplies an agenda, document, chat background, or explicit goals, read accessible material before joining and create a private briefing with: context, desired outcomes, questions to resolve, known risks, and terms/names to recognize. Capture the requested role perspective, focus, deliverables, sensitivity, and approved recipients. If the meeting is already active, join first and pre-read concurrently rather than arriving late.
 
@@ -126,7 +126,9 @@ Do not rely on a post-meeting event read. Providers may return terminal codes su
 
 Before answering any “参加了吗 / 现在什么状态 / 为什么没总结” question, inspect this evidence chain in order: assignment and scheduler ledger, server participant snapshot, archive lock plus `status.json` heartbeat, `final.json`, then the delivery receipt. State the strongest proven phase only. `scheduled` and `dispatched` are not attendance; absence of remembered chat context is not evidence that no meeting occurred.
 
-Send the result to the persisted, prevalidated original destination with `botmux send --response-kind final` exactly once, using `--into <rootMessageId>` when a topic root was captured and explicitly mentioning the verified assigner for a substantive result. Never send the report merely to the isolated runner's new topic. Record confirmed delivery idempotently by `assignmentId + recipient`; only `delivered` is successful completion. Include:
+Build one canonical final report per `assignmentId`. A 30-second brief, full minutes, role-specific interpretation, technical review, decisions, risks, and TODOs are sections of that single report, never separate externally visible reports. Do not let the invoking session, monitor, supervisor, recovery runner, or role-specific analysis each send its own final. Intermediate attendance or monitoring updates are progress only and must not contain a second set of minutes.
+
+Before any final send, check the durable delivery state for `assignmentId + recipient`. If a confirmed final-delivery receipt already exists, do not send again. If a prior send is ambiguous, preserve the unresolved state for reconciliation and do not send another version. Otherwise send the canonical result to the persisted, prevalidated original destination with `botmux send --response-kind final`, using `--into <rootMessageId>` when a topic root was captured and explicitly mentioning the verified assigner for a substantive result. Never send the report merely to the isolated runner's new topic. Record a confirmed delivery idempotently by `assignmentId + recipient`; only `delivered` is successful completion. Include:
 
 - meeting number/topic and the actual coverage window;
 - concise decisions and important discussion points, linked to transcript/chat evidence when useful;
