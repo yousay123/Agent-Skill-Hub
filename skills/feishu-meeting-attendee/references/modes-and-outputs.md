@@ -54,7 +54,7 @@ Treat transcript revisions with the same `sentenceId` as one evolving sentence. 
 
 The default deliverable is a structured task draft in the invoking conversation. Do not create external tasks merely because a TODO was detected.
 
-For role-specific reporting, keep the evidence common and vary only the interpretation layer. A useful default is:
+Produce one canonical report. For role-specific reporting, keep the evidence common and vary only the interpretation layer inside that same report. Never send the 30-second brief, full minutes, role view, technical review, or task draft as separate final messages; merge requested views into sections and deliver the composite once. A useful default is:
 
 - 30-second brief: decisions, actions, risks, and items requiring the assigner's decision;
 - role view: implications for the requested role and explicitly requested focus;
